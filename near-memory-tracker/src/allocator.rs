@@ -10,12 +10,12 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::mem;
 use std::os::raw::c_void;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::time::Instant;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
+const MEBIBYTE: usize = 1024 * 1024;
 const MIN_BLOCK_SIZE: usize = 1000;
 const SMALL_BLOCK_TRACE_PROBABILITY: usize = 1;
-const REPORT_USAGE_INTERVAL: usize = 512 * 1024 * 1024;
+const REPORT_USAGE_INTERVAL: usize = 512 * MEBIBYTE;
 const SKIP_ADDR: u64 = 0x700000000000;
 const PRINT_STACK_TRACE_ON_MEMORY_SPIKE: bool = true;
 
@@ -23,7 +23,6 @@ const COUNTERS_SIZE: usize = 16384;
 static JEMALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE as usize] = arr![AtomicUsize::new(0); 16384];
 static MEM_CNT: [AtomicUsize; COUNTERS_SIZE as usize] = arr![AtomicUsize::new(0); 16384];
-static TIME_SPEND: AtomicU64 = AtomicU64::new(0);
 
 static mut SKIP_PTR: [u8; 1 << 20] = [0; 1 << 20];
 static mut CHECKED_PTR: [u8; 1 << 20] = [0; 1 << 20];
@@ -49,7 +48,6 @@ const MAGIC_RUST: usize = 0x12345678991100;
 thread_local! {
     pub static TID: RefCell<usize> = RefCell::new(usize::max_value());
     pub static IN_TRACE: RefCell<usize> = RefCell::new(0);
-    pub static LAST_SIZE: RefCell<usize> = RefCell::new(0);
     pub static MEMORY_USAGE_MAX: RefCell<usize> = RefCell::new(0);
     pub static MEMORY_USAGE_LAST_REPORT: RefCell<usize> = RefCell::new(0);
 }
@@ -155,11 +153,6 @@ pub fn reset_memory_usage_max() {
     MEMORY_USAGE_LAST_REPORT.with(|x| *x.borrow_mut() = memory_usage);
 }
 
-pub fn get_time_spend_and_reset() -> u64 {
-    let result = TIME_SPEND.load(Ordering::SeqCst);
-    TIME_SPEND.store(0, Ordering::SeqCst);
-    result
-}
 
 pub struct MyAllocator;
 unsafe impl GlobalAlloc for MyAllocator {
@@ -169,10 +162,9 @@ unsafe impl GlobalAlloc for MyAllocator {
 
         let res = JEMALLOC.alloc(new_layout);
 
-        let now = Instant::now();
-
         let tid = get_tid();
-        let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::SeqCst);
+        let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].fetch_add(layout.size(), Ordering::SeqCst);
+        MEM_CNT[tid % COUNTERS_SIZE].fetch_add(1, Ordering::SeqCst);
 
         if PRINT_STACK_TRACE_ON_MEMORY_SPIKE && memory_usage > REPORT_USAGE_INTERVAL + MEMORY_USAGE_LAST_REPORT.with(|x| *x.borrow()) {
             if IN_TRACE.with(|in_trace| *in_trace.borrow()) == 0 {
@@ -184,7 +176,7 @@ unsafe impl GlobalAlloc for MyAllocator {
                 warn!(
                     "Thread {} reached new record of memory usage {}MiB\n{:?}",
                     tid,
-                    memory_usage / 1024 / 1024,
+                    memory_usage / MEBIBYTE,
                     bt
                 );
                 IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 0);
@@ -194,11 +186,7 @@ unsafe impl GlobalAlloc for MyAllocator {
             MEMORY_USAGE_MAX.with(|x| *x.borrow_mut() = memory_usage);
         }
 
-        MEM_SIZE[tid % COUNTERS_SIZE].fetch_add(layout.size(), Ordering::SeqCst);
-        MEM_CNT[tid % COUNTERS_SIZE].fetch_add(1, Ordering::SeqCst);
-
         let mut addr: Option<*mut c_void> = Some(MISSING_TRACE);
-
         let mut ary: [*mut c_void; MAX_STACK + 1] = [0 as *mut c_void; MAX_STACK + 1];
         let mut chosen_i = 0;
 
@@ -288,7 +276,6 @@ unsafe impl GlobalAlloc for MyAllocator {
                 addr = Some(SKIPPED_TRACE);
             }
             IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 0);
-            LAST_SIZE.with(|ls| *ls.borrow_mut() = layout.size());
         }
 
         let mut stack = [0 as *mut c_void; STACK_SIZE];
@@ -307,8 +294,6 @@ unsafe impl GlobalAlloc for MyAllocator {
 
         *(res as *mut AllocHeader) = header;
 
-        let took = now.elapsed();
-        TIME_SPEND.fetch_add(took.as_nanos() as u64, Ordering::SeqCst);
         res.offset(HEADER_SIZE as isize)
     }
 
