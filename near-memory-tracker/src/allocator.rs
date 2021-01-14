@@ -17,6 +17,7 @@ const MIN_BLOCK_SIZE: usize = 1000;
 const SMALL_BLOCK_TRACE_PROBABILITY: usize = 1;
 const REPORT_USAGE_INTERVAL: usize = 512 * 1024 * 1024;
 const SKIP_ADDR: u64 = 0x700000000000;
+const PRINT_STACK_TRACE_ON_MEMORY_SPIKE: bool = true;
 
 const COUNTERS_SIZE: usize = 16384;
 static JEMALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
@@ -47,7 +48,6 @@ const MAGIC_RUST: usize = 0x12345678991100;
 
 thread_local! {
     pub static TID: RefCell<usize> = RefCell::new(usize::max_value());
-    pub static TID2: RefCell<usize> = RefCell::new(usize::max_value());
     pub static IN_TRACE: RefCell<usize> = RefCell::new(0);
     pub static LAST_SIZE: RefCell<usize> = RefCell::new(0);
     pub static MEMORY_USAGE_MAX: RefCell<usize> = RefCell::new(0);
@@ -174,7 +174,7 @@ unsafe impl GlobalAlloc for MyAllocator {
         let tid = get_tid();
         let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::SeqCst);
 
-        if memory_usage > REPORT_USAGE_INTERVAL + MEMORY_USAGE_LAST_REPORT.with(|x| *x.borrow()) {
+        if PRINT_STACK_TRACE_ON_MEMORY_SPIKE && memory_usage > REPORT_USAGE_INTERVAL + MEMORY_USAGE_LAST_REPORT.with(|x| *x.borrow()) {
             if IN_TRACE.with(|in_trace| *in_trace.borrow()) == 0 {
                 IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 1);
                 MEMORY_USAGE_LAST_REPORT.with(|x| *x.borrow_mut() = memory_usage);
@@ -327,16 +327,6 @@ unsafe impl GlobalAlloc for MyAllocator {
         JEMALLOC.dealloc(ptr, new_layout);
 
     }
-}
-
-pub fn enable_tracking(name: &str) {
-    TID2.with(|t| {
-        if *t.borrow() == usize::max_value() {
-            let tid = get_tid();
-            info!("enabling tracking for {}: {}", name, tid);
-            *t.borrow_mut() = tid;
-        }
-    });
 }
 
 pub fn print_counters_ary() {
