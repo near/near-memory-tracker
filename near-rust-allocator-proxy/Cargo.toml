@@ -1,6 +1,6 @@
 [package]
-name = "near-rust-memory-allocator"
-version = "0.2.0"
+name = "near-rust-allocator-proxy"
+version = "0.2.1"
 authors = ["Piotr Mikulski <piotr@near.org>"]
 edition = "2018"
 
