@@ -310,7 +310,6 @@ unsafe impl GlobalAlloc for MyAllocator {
         MEM_CNT[tid % COUNTERS_SIZE].fetch_sub(1, Ordering::SeqCst);
 
         JEMALLOC.dealloc(ptr, new_layout);
-
     }
 }
 

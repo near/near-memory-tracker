@@ -1,5 +1,5 @@
 [package]
-name = "near-memory-tracker"
+name = "near-rust-memory-allocator"
 version = "0.1.0"
 authors = ["Piotr Mikulski <piotr@near.org>"]
 edition = "2018"
