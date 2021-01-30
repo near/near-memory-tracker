@@ -46,20 +46,16 @@ const HEADER_SIZE: usize = mem::size_of::<AllocHeader>();
 const MAGIC_RUST: usize = 0x12345678991100;
 
 thread_local! {
-    pub static TID: RefCell<usize> = RefCell::new(usize::max_value());
+    pub static TID: RefCell<usize> = RefCell::new(0);
     pub static IN_TRACE: RefCell<usize> = RefCell::new(0);
     pub static MEMORY_USAGE_MAX: RefCell<usize> = RefCell::new(0);
     pub static MEMORY_USAGE_LAST_REPORT: RefCell<usize> = RefCell::new(0);
 }
 
-extern "C" {
-    pub fn gettid() -> u32;
-}
-
 pub fn get_tid() -> usize {
     let res = TID.with(|t| {
-        if *t.borrow() == usize::max_value() {
-            *t.borrow_mut() = unsafe { gettid() as usize };
+        if *t.borrow() == 0 {
+            *t.borrow_mut() = nix::unistd::gettid().as_raw() as usize;
         }
         *t.borrow()
     });
