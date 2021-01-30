@@ -52,14 +52,10 @@ thread_local! {
     pub static MEMORY_USAGE_LAST_REPORT: RefCell<usize> = RefCell::new(0);
 }
 
-extern "C" {
-    pub fn gettid() -> u32;
-}
-
 pub fn get_tid() -> usize {
     let res = TID.with(|t| {
         if *t.borrow() == usize::max_value() {
-            *t.borrow_mut() = unsafe { gettid() as usize };
+            *t.borrow_mut() = nix::unistd::gettid().as_raw() as usize;
         }
         *t.borrow()
     });
