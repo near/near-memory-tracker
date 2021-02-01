@@ -52,10 +52,25 @@ thread_local! {
     pub static MEMORY_USAGE_LAST_REPORT: RefCell<usize> = RefCell::new(0);
 }
 
+#[cfg(not(target_os = "linux"))]
+pub static NTHREADS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(target_os = "linux")]
 pub fn get_tid() -> usize {
     let res = TID.with(|t| {
         if *t.borrow() == 0 {
-            *t.borrow_mut() = nix::unistd::gettid().as_raw() as usize;
+                *t.borrow_mut() = nix::unistd::gettid().as_raw() as usize;
+        }
+        *t.borrow()
+    });
+    res
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn get_tid() -> usize {
+    let res = TID.with(|t| {
+        if *t.borrow() == 0 {
+            *t.borrow_mut() = NTHREADS.fetch_add(1, Ordering::SeqCst) as usize;
         }
         *t.borrow()
     });
