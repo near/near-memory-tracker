@@ -1,6 +1,6 @@
 [package]
 name = "near-rust-allocator-proxy"
-version = "0.2.1"
+version = "0.2.5"
 authors = ["Piotr Mikulski <piotr@near.org>"]
 edition = "2018"
 

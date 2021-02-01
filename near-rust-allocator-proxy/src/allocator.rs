@@ -153,6 +153,11 @@ pub fn thread_memory_usage(tid: usize) -> usize {
     memory_usage
 }
 
+pub fn thread_memory_count(tid: usize) -> usize {
+    let memory_cnt = MEM_CNT[tid % COUNTERS_SIZE].load(Ordering::SeqCst);
+    memory_cnt
+}
+
 pub fn current_thread_peak_memory_usage() -> usize {
     MEMORY_USAGE_MAX.with(|x| *x.borrow())
 }
