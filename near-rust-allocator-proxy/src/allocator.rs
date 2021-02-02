@@ -19,6 +19,13 @@ const REPORT_USAGE_INTERVAL: usize = 512 * MEBIBYTE;
 const SKIP_ADDR: u64 = 0x700000000000;
 const PRINT_STACK_TRACE_ON_MEMORY_SPIKE: bool = true;
 
+#[cfg(target_os = "linux")]
+const ENABLE_STACK_TRACE: bool = true;
+
+// Currently there is no point in getting stack traces on non-linux platform, because other tools don't support linux.
+#[cfg(not(target_os = "linux"))]
+const ENABLE_STACK_TRACE: bool = false;
+
 const COUNTERS_SIZE: usize = 16384;
 static JEMALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE as usize] = arr![AtomicUsize::new(0); 16384];
@@ -206,7 +213,7 @@ unsafe impl GlobalAlloc for MyAllocator {
         let mut ary: [*mut c_void; MAX_STACK + 1] = [0 as *mut c_void; MAX_STACK + 1];
         let mut chosen_i = 0;
 
-        if IN_TRACE.with(|in_trace| *in_trace.borrow()) == 0 {
+        if ENABLE_STACK_TRACE && IN_TRACE.with(|in_trace| *in_trace.borrow()) == 0 {
             IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 1);
             if layout.size() >= MIN_BLOCK_SIZE || rand::thread_rng().gen_range(0, 100) < SMALL_BLOCK_TRACE_PROBABILITY {
                 let size = libc::backtrace(ary.as_ptr() as *mut *mut c_void, MAX_STACK as i32);
