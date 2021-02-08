@@ -42,3 +42,4 @@ struct AllocHeader {
 
 # TODO
 * Add methods to set the configuration instead of having to change the constants.
+* Add tests
