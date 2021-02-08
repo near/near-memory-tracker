@@ -2,13 +2,14 @@
 name = "near-rust-allocator-proxy"
 version = "0.2.6"
 authors = ["Piotr Mikulski <piotr@near.org>"]
-edition = "2018"
+description = "Rust allocator proxy with added header"
+readme = "README.md"
+keyworks = ["memory", "tracker", "allocation", "header"]
+respository = "https://github.com/near/near-memory-tracker"
 license = "MIT OR Apache-2.0"
 categories = ["memory-management"]
-respository = "https://github.com/near/near-memory-tracker"
-keyworks = ["memory", "tracker", "allocation", "header"]
 public = ["near-memory-tracker"]
-readme = "README.md"
+edition = "2018"
 
 [dependencies]
 rand = "0.7.3"
