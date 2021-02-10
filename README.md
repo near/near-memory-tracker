@@ -41,22 +41,6 @@ executable `LD_PRELOAD=./mtrace.so path'.
 The core tool is in `dump.cpp` file. It dumps the program memory and it prints
 memory statistics.
 
-# Header representation
-
-Allocation structure:
-* magic - unique 8 bytes identifier, used to mark memory memory allocations
-* size - size in bytes
-* tid - thread id
-* stack - stack trace during time of allocation
-
-#[repr(C)]
-struct AllocHeader {
-    magic: u64,
-    size: u64,
-    tid: u64,
-    stack: [*mut c_void; STACK_SIZE],
-}
-
 # Modules
 * near-rust-allocator-proxy inside `near-rust-allocator-proxy` folder
 * near-c-allocator-proxy `near-c-allocator-proxy.c` inside
