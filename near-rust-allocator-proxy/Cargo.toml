@@ -4,11 +4,10 @@ version = "0.2.7"
 authors = ["Near Inc <hello@nearprotocol.com>", "Piotr Mikulski <piotr@near.org>"]
 description = "Rust allocator proxy with added header"
 readme = "README.md"
-keyworks = ["memory", "tracker", "allocation", "header"]
-respository = "https://github.com/near/near-memory-tracker"
+keywords = ["memory", "tracker", "allocation", "header"]
+repository = "https://github.com/near/near-memory-tracker"
 license = "Apache-2.0"
 categories = ["memory-management"]
-public = ["near-memory-tracker"]
 edition = "2018"
 
 [dependencies]
