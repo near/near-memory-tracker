@@ -1,0 +1,14 @@
+[workspace]
+members = [
+    "near-rust-allocator-proxy"
+]
+
+[profile.release]
+lto = true        # Enable full link-time optimization.
+codegen-units = 1 # Use only 1 codegen-unit to enable full optimizations.
+overflow-checks = true
+
+[profile.bench]
+lto = true
+codegen-units = 1 # Use only 1 codegen-unit to enable full optimizations.
+overflow-checks = true
