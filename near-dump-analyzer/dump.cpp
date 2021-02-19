@@ -91,7 +91,7 @@ struct Counter {
 map<uint64_t, Mmap> read_mmap() {
   map<uint64_t, Mmap> res;
 
-  for (const auto & entry : std::filesystem::directory_iterator("logs")) {
+  for (const auto & entry : std::filesystem::directory_iterator("/tmp/dump/logs")) {
     ifstream in(entry.path(), ios::in);
 
     const int SIZE=10000;
