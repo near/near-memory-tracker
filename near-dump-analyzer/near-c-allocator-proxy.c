@@ -187,9 +187,10 @@ void free(void *ptr)
 	} else {
             if (ptr) {
     		((struct Header*)ptr)->magic += 0x100;
-            	mem_allocated_cnt -= 1;
-            	mem_allocated_bytes -= ((struct Header*)ptr)->size;
-		__atomic_sub_fetch(&mem_allocated_total_bytes, ((struct Header*)ptr)->size, __ATOMIC_SEQ_CST);
+                mem_allocated_cnt -= 1;
+                size_t size = ((struct Header*)ptr)->size;
+                mem_allocated_bytes -= size;
+		__atomic_sub_fetch(&mem_allocated_total_bytes, size, __ATOMIC_SEQ_CST);
 	    }
 	}
         __libc_free(ptr);
@@ -210,8 +211,9 @@ void *realloc(void *ptr, size_t size)
         return __libc_realloc(ptr, size);
     }
     if (ptr) {
-        mem_allocated_bytes -= ((struct Header*)ptr)->size;
-	__atomic_sub_fetch(&mem_allocated_total_bytes, ((struct Header*)ptr)->size, __ATOMIC_SEQ_CST);
+        size_t size = ((struct Header*)ptr)->size;
+        mem_allocated_bytes -= size;
+	__atomic_sub_fetch(&mem_allocated_total_bytes, size, __ATOMIC_SEQ_CST);
     }
 
     if (tid == 0) tid = gettid();
@@ -270,10 +272,12 @@ int posix_memalign(void **memptr, size_t alignment, size_t size)
 
     int res = myfn_posix_memalign(memptr, alignment, size + ALIGN);
     if (tid == 0) tid = gettid();
+
     struct Header header = { MAGIC, size, tid, (size_t)get_trace(size)};
     *(struct Header*)*memptr = header;
     mem_allocated_cnt += 1;
     mem_allocated_bytes += size;
+    __atomic_add_fetch(&mem_allocated_total_bytes, size, __ATOMIC_SEQ_CST);
 
     *memptr += ALIGN;
 
