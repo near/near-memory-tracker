@@ -28,6 +28,7 @@ const ENABLE_STACK_TRACE: bool = false;
 
 const COUNTERS_SIZE: usize = 16384;
 static JEMALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+static TOTAL_MEMORY_USAGE: AtomicUsize = AtomicUsize::new(0);
 static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE as usize] = arr![AtomicUsize::new(0); 16384];
 static MEM_CNT: [AtomicUsize; COUNTERS_SIZE as usize] = arr![AtomicUsize::new(0); 16384];
 
@@ -149,6 +150,10 @@ fn skip_ptr(addr: *mut c_void) -> bool {
     return found;
 }
 
+pub fn total_memory_usage() -> usize {
+    TOTAL_MEMORY_USAGE.load(Ordering::SeqCst)
+}
+
 pub fn current_thread_memory_usage() -> usize {
     let tid = get_tid();
     let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::SeqCst);
@@ -187,6 +192,7 @@ unsafe impl GlobalAlloc for MyAllocator {
 
         let tid = get_tid();
         let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].fetch_add(layout.size(), Ordering::SeqCst);
+        TOTAL_MEMORY_USAGE.fetch_add(layout.size(), Ordering::SeqCst);
         MEM_CNT[tid % COUNTERS_SIZE].fetch_add(1, Ordering::SeqCst);
 
         if PRINT_STACK_TRACE_ON_MEMORY_SPIKE && memory_usage > REPORT_USAGE_INTERVAL + MEMORY_USAGE_LAST_REPORT.with(|x| *x.borrow()) {
@@ -330,6 +336,7 @@ unsafe impl GlobalAlloc for MyAllocator {
         let tid: usize = (*(ptr as *mut AllocHeader)).tid as usize;
 
         MEM_SIZE[tid % COUNTERS_SIZE].fetch_sub(layout.size(), Ordering::SeqCst);
+        TOTAL_MEMORY_USAGE.fetch_sub(layout.size(), Ordering::SeqCst);
         MEM_CNT[tid % COUNTERS_SIZE].fetch_sub(1, Ordering::SeqCst);
 
         JEMALLOC.dealloc(ptr, new_layout);
