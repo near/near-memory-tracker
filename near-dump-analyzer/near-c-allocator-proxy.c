@@ -147,8 +147,12 @@ void *malloc(size_t size)
 
 #ifdef COUNT_BYTES
     if (size == (~(size_t)0)) {
-        // hack used to report memory usage bytes
+        // hack used to report memory usage bytes from all threads
         return (void *)mem_allocated_total_bytes;
+    }
+    if (size == (~(size_t)0) - 1) {
+        // hack used to report memory usage bytes from current thread
+        return (void *)mem_allocated_bytes;
     }
 
     void *ptr = __libc_malloc(size + ALIGN);
