@@ -24,7 +24,8 @@
 using namespace std;
 
 const double MiB = (double)1024*1024;
-const int min_printable_size = MiB / 100;
+const int min_printable_size = MiB/ 2;
+const bool COMPUTE_TRACES = false;
 
 
 string tolower(string in) {
@@ -134,7 +135,7 @@ map<uint64_t, Mmap> read_mmap() {
 vector<Entry> read_symbols2(int pid) {
   vector<Entry> res;
   ostringstream symbols_file;
-  symbols_file << "symbols/" << pid << ".m";
+  symbols_file << "/tmp/dump/symbols/" << pid << ".m";
 
   ifstream in(symbols_file.str().c_str(), ios::in);
 
@@ -165,7 +166,7 @@ vector<Entry> read_symbols2(int pid) {
 vector<Entry> read_symbols(int pid) {
   vector<Entry> res;
   ostringstream symbols_file;
-  symbols_file << "symbols/" << pid;
+  symbols_file << "/tmp/dump/symbols/" << pid;
 
   ifstream in(symbols_file.str().c_str(), ios::in);
 
@@ -310,12 +311,16 @@ struct ResultEntry {
 
 
 int main(int argc, char **argv) {
-  if (argc < 1) {
-    cout << "./dump <PID>" << endl;
+  if (argc < 2) {
+    cout << "./dump <PID> [<TID>]" << endl;
     return 1;
   }
   auto mmap = read_mmap();
   int pid = atoi(argv[1]);
+  uint64_t target_tid = 0;
+  if (argc >= 3) {
+    target_tid = atoi(argv[2]);
+  }
   auto symbols = read_symbols(pid);
   auto symbols2 = read_symbols2(pid);
 
@@ -335,7 +340,7 @@ int main(int argc, char **argv) {
     return x->second.file;
   };
 
-  cout << "PID: " << pid << endl;
+  cout << "PID: " << pid << " target_tid " << target_tid << endl;
   stringstream pagemap_file_name;
   pagemap_file_name << "/proc/" << pid << "/pagemap";
 
@@ -428,6 +433,9 @@ int main(int argc, char **argv) {
           uint64_t tid = *(uint64_t*)&buf[i + 2*sizeof(uint64_t)];
           uint64_t func = *(uint64_t*)&buf[i + 3*sizeof(uint64_t)];
 
+          if (target_tid != 0 && target_tid != tid) {
+            continue;
+          }
 
           if (size > to_read || size <= 0) continue;
           auto real_s = calc_size(f, a1 + read + i + 32, size);
@@ -482,11 +490,15 @@ int main(int argc, char **argv) {
           int header_size = 24 + 8 * (magic & 0xff);
 
           uint64_t size = *(uint64_t*)&buf[i + sizeof(uint64_t)];
-          // uint64_t tid = *(int64_t*)&buf[i + 2*sizeof(uint64_t)];
+          uint64_t tid = *(int64_t*)&buf[i + 2*sizeof(uint64_t)];
           uint64_t func = *(uint64_t*)&buf[i + 3*sizeof(uint64_t)];
           if (size > to_read || size <= 0) continue;
           // if (size <= 0 || size > read + PAGE_SIZE) continue;
           auto real_s = calc_size(f, a1 + read + i + header_size, size);
+
+          if (target_tid != 0 && target_tid != tid) {
+            continue;
+          }
 
           if ((magic | 0xff) == (MAGIC_RUST | 0xff)) {
             ptr2bi[a1 + read + i + header_size] = {size, func, false, false};
@@ -604,13 +616,6 @@ int main(int argc, char **argv) {
     } else {
       memset(buf, 0, PAGE_SIZE);
     }
-    // bool seen_c_alloc = false;
-    // bool seen_rust_alloc = false;
-    // bool seen_mmap = false;
-    // uint64_t tmp_act_mmaped_size = 0, tmp_c_size = 0;
-
-
-    // uint64_t dealloc_c_pages_next = 0;
 
     uint64_t cur_ptr = 0;
     uint64_t cur_func = 0;
@@ -618,7 +623,6 @@ int main(int argc, char **argv) {
 
     uint64_t rust_next_ptr = 0;
     uint64_t rust_next_size = 0;
-    // uint64_t rust_next_func = 0;
     uint64_t tracked_ptr = 0, untracked_ptr = 0;
 
     while (to_read > 0) {
@@ -662,10 +666,7 @@ int main(int argc, char **argv) {
 
 
             if (cur_size >= 1) {
-              // TMP
-              // if (ptr2bi[maybe_ptr].func != cur_func && cur_ptr != maybe_ptr) { // && ptr2bi[maybe_ptr].is_c)
                 ptr2bi[maybe_ptr].prev.push_back(cur_ptr);
-              // }
               tracked_ptr++;
               if (cur_func > 2 && cur_func == ptr2bi[maybe_ptr].func) {
 
@@ -678,61 +679,10 @@ int main(int argc, char **argv) {
 
               untracked_ptr++;
             }
-            /*
-            if (a1 + read  +i >= rust_next_ptr && a1 + read + i < rust_next_ptr + rust_next_size) {
-              if (ptr2bi[maybe_ptr].func != rust_next_func && rust_next_ptr != maybe_ptr) { // && ptr2bi[maybe_ptr].is_c == false) {
-                ptr2bi[maybe_ptr].prev.push_back(rust_next_ptr);
-
-                //cout<<hex<<maybe_ptr<<" "<<rust_next_ptr<<" RUST"<<endl;
-              }
-            }
-            */
           }
         }
         if (cur_size) cur_size -= 1;
       }
-      /*
-      if (dealloc_c_pages_next > 0) {
-        uint64_t diff = PAGE_SIZE - dealloc_c_offset;
-        uint64_t decrease = min(diff, (uint64_t)dealloc_c_pages_next);
-        if (decrease && dealloc_func) func2size_c_dealloc[dealloc_func].sum += decrease;
-        dealloc_c += decrease;
-        dealloc_c_pages_next -= decrease;
-
-      }
-      {
-        if (mmap_func) {
-          seen_mmap = true;
-
-          if (present) {
-            mmap_func2size[mmap_func].sum += PAGE_SIZE;
-            mmap_func2size[mmap_func].cnt += 1;
-            tmp_act_mmaped_size += PAGE_SIZE;
-            if (mapped_file.size() >= 1 && mapped_file[0] == '/') {
-              mmaped_file_size += PAGE_SIZE;
-            }
-          }
-          mmap_func2size2[mmap_func].sum += PAGE_SIZE;
-          mmap_func2size2[mmap_func].cnt += 1;
-          mmaped_size += PAGE_SIZE;
-        } else {
-          if (present) {
-            if (mapped_file.size() >= 1 && mapped_file[0] == '/') {
-              not_mmaped_file_size += PAGE_SIZE;
-            }
-          }
-        }
-      }
-      */
-
-      /*
-      if (present) {
-        active_pages++;
-        tmp_active_pages++;
-      }
-      */
-      //pages++;
-      //tmp_total_pages++;
 
       to_read -= PAGE_SIZE;
       read += PAGE_SIZE;
@@ -741,16 +691,6 @@ int main(int argc, char **argv) {
 
       present = next_present;
     }
-    /*
-    if (seen_c_alloc) c_active_pages += tmp_active_pages;
-
-    if (!(mapped_file.size() >= 1 && mapped_file[0] == '/')) {
-      unknown_mem += PAGE_SIZE * tmp_active_pages - tmp_act_mmaped_size - tmp_c_size;
-      if (seen_c_alloc) {
-        unknown_mem_possibly_c += PAGE_SIZE * tmp_active_pages - tmp_act_mmaped_size - tmp_c_size;
-      }
-    }
-    */
     printf( "addr: %" PRIx64 "-%" PRIx64 " untracked: %lu/%lu \n", a1, a2, tracked_ptr, untracked_ptr);
   }
 
@@ -809,87 +749,89 @@ int main(int argc, char **argv) {
           size_t tries = 0;
 
           auto start = time(NULL);
-          for (auto ptr : elem.second.samples) {
-            ref += ptr2bi[ptr].ref;
-            if (ptr2bi[ptr].prev.size() == 0) continue;
-            found = 1;
+          if (COMPUTE_TRACES) {
+            for (auto ptr : elem.second.samples) {
+              ref += ptr2bi[ptr].ref;
+              if (ptr2bi[ptr].prev.size() == 0) continue;
+              found = 1;
 
-            set<long long> seen;
-            set<pair<long long, string>> seen2;
-            vector<ResultEntry> tmp_res;
-            set<string> tmp_res_score;
+              set<long long> seen;
+              set<pair<long long, string>> seen2;
+              vector<ResultEntry> tmp_res;
+              set<string> tmp_res_score;
 
-            int cnt = 100;
+              int cnt = 100;
 
-            queue<pair<int, uint64_t>> q;
-            q.push({0, ptr});
+              queue<pair<int, uint64_t>> q;
+              q.push({0, ptr});
 
-// #define RECOVER_STACK_NEW
+  // #define RECOVER_STACK_NEW
 
 #ifdef RECOVER_STACK_NEW
-            while(!q.empty()) {
-              auto ptr_pair = q.front();
-              auto ptr= ptr_pair.second;
-              q.pop();
-              auto e = ptr2bi[ptr];
-              auto file3 = find_file2(ptr2bi[ptr].func);
-              auto size = ptr2bi[ptr].size;
-              if (!seen2.count({size, file3})) {
-                if (file3.find("actix") != string::npos) continue;
-                if (file3.find("tokio") != string::npos) continue;
-                seen2.insert({size, file3});
-                tmp_res.push_back({ptr_pair.first, ptr,  e.size, file3, ptr2bi[ptr].func});
-              }
-              for (auto ptr2: e.prev) {
-                if (seen.count(ptr2)) continue;
-                seen.insert(ptr2);
-
-                q.push({ptr_pair.first + 1, ptr2});
-              }
-            }
-#else
-            for (int cnt2=0;cnt--;cnt2++) {
-              auto e = ptr2bi[ptr];
-              seen.insert(ptr);
-              auto file3 = find_file2(e.func);
-              tmp_res.push_back({cnt2, ptr,  e.size, file3, e.func});
-              if (file3.size() > 0 && file3[0] != '<') tmp_res_score.insert(file3);
-
-              if (e.prev.size() == 0) break;
-              bool f = 0;
-
-              for (auto ptr2: e.prev) {
-                if (seen.count(ptr2)) continue;
-                seen.insert(ptr2);
-                ptr = ptr2;
+              while(!q.empty()) {
+                auto ptr_pair = q.front();
+                auto ptr= ptr_pair.second;
+                q.pop();
+                auto e = ptr2bi[ptr];
                 auto file3 = find_file2(ptr2bi[ptr].func);
-
-                if (file3.find("backtrace") != string::npos) continue;
-                if (file3.find("tokio::runtime::enter::ENTERED") != string::npos) {
-                  //cout<<hex<<" "<<e.func<<" ENTERED"<<endl;
-                  continue;
+                auto size = ptr2bi[ptr].size;
+                if (!seen2.count({size, file3})) {
+                  if (file3.find("actix") != string::npos) continue;
+                  if (file3.find("tokio") != string::npos) continue;
+                  seen2.insert({size, file3});
+                  tmp_res.push_back({ptr_pair.first, ptr,  e.size, file3, ptr2bi[ptr].func});
                 }
-                f = 1;
+                for (auto ptr2: e.prev) {
+                  if (seen.count(ptr2)) continue;
+                  seen.insert(ptr2);
 
-                break;
+                  q.push({ptr_pair.first + 1, ptr2});
+                }
               }
-              if (f == 0) break;
-            }
+#else
+              for (int cnt2=0;cnt--;cnt2++) {
+                auto e = ptr2bi[ptr];
+                seen.insert(ptr);
+                auto file3 = find_file2(e.func);
+                tmp_res.push_back({cnt2, ptr,  e.size, file3, e.func});
+                if (file3.size() > 0 && file3[0] != '<') tmp_res_score.insert(file3);
+
+                if (e.prev.size() == 0) break;
+                bool f = 0;
+
+                for (auto ptr2: e.prev) {
+                  if (seen.count(ptr2)) continue;
+                  seen.insert(ptr2);
+                  ptr = ptr2;
+                  auto file3 = find_file2(ptr2bi[ptr].func);
+
+                  if (file3.find("backtrace") != string::npos) continue;
+                  if (file3.find("tokio::runtime::enter::ENTERED") != string::npos) {
+                    //cout<<hex<<" "<<e.func<<" ENTERED"<<endl;
+                    continue;
+                  }
+                  f = 1;
+
+                  break;
+                }
+                if (f == 0) break;
+              }
 #endif
-            if (tmp_res.size() <= 1) continue;
-            if (tmp_res.size() == 2 && tmp_res.back().path.find("backtrace") != string::npos) continue;
-            if (tmp_res.size() == 2 && tmp_res.back().path.find("tokio::runtime::enter::ENTERED") != string::npos) continue;
+              if (tmp_res.size() <= 1) continue;
+              if (tmp_res.size() == 2 && tmp_res.back().path.find("backtrace") != string::npos) continue;
+              if (tmp_res.size() == 2 && tmp_res.back().path.find("tokio::runtime::enter::ENTERED") != string::npos) continue;
 
-            int64_t new_score = tmp_res_score.size() * 1000 - tmp_res.size();
+              int64_t new_score = tmp_res_score.size() * 1000 - tmp_res.size();
 
-            if (res_score <= new_score) {
-              res_score = new_score;
-              res = tmp_res;
+              if (res_score <= new_score) {
+                res_score = new_score;
+                res = tmp_res;
+              }
+              if (tries++ >= 10000) break;
+              if (time(NULL) - start > 15) break;
+
+              // break;
             }
-            if (tries++ >= 10000) break;
-            if (time(NULL) - start > 15) break;
-
-            // break;
           }
           for(auto r:res) cout<<r.depth<<" "<<hex<<r.ptr<<" "<<r.func<<" "<<dec<<r.size<<" "<<arg[r.func].cnt<<" "<<r.path<<endl;
           cout<<"found "<<found<<" ref "<<ref<<endl;
