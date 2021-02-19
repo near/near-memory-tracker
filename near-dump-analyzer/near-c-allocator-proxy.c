@@ -154,7 +154,7 @@ void *malloc(size_t size)
     }
     if (size == (~(size_t)0) - 1) {
         // hack used to report memory usage bytes from current thread
-        return (void *)mem_allocated_bytes[tid];
+        return (void *)mem_allocated_bytes[tid % MAX_TID];
     }
 
     void *ptr = __libc_malloc(size + ALIGN);
