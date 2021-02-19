@@ -29,7 +29,7 @@ run: all
 	nearup stop
 	rm -rf logs
 	mkdir -p logs
-	LD_PRELOAD=./bins/near-c-allocator-proxy.so nohup nice -10 nearup run $(NETWORK) --binary-path $(REPO_PATH)/target/release $(EXTRA)
+	LD_PRELOAD=${PWD}/bins/near-c-allocator-proxy.so nohup nice -10 nearup run $(NETWORK) --binary-path $(REPO_PATH)/target/release $(EXTRA)
 
 
 dump: all
@@ -39,4 +39,4 @@ dump: all
 	mkdir -p symbols || true;
 	test -f symbols/${PID} || (echo maint print psymbols | sudo gdb -p "${PID}" >> "symbols/${PID}");
 	test -f symbols/${PID}.m || (echo maint print msymbols | sudo gdb -p "${PID}" >> "symbols/${PID}.m");
-	sudo ./bins/dump "${PID}"
+	sudo ${PWD}/bins/dump "${PID}"

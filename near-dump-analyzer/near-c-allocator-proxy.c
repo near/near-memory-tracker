@@ -14,7 +14,6 @@
 #include <sys/types.h>
 
 
-
 const int ALLOC_LIMIT = 100;
 
 thread_local FILE * file = 0;
@@ -106,7 +105,6 @@ void print_trace2(void) {
 */
 
 void * get_trace(int64_t alloc_size) {
-
     if (alloc_size < ALLOC_LIMIT && (rand() % 100 != 0 && last_size == alloc_size)) {
     // if (alloc_size != 128 && alloc_size < ALLOC_LIMIT && (rand() % 100 != 0)) {
         return (void *)1;
@@ -146,6 +144,15 @@ void *malloc(size_t size)
 {
 
 #ifdef COUNT_BYTES
+    if (size == (~(size_t)0)) {
+        // hack used to report memory usage bytes
+        return (void *)mem_allocated_bytes;
+    }
+    if (size == (~(size_t)0) - 1) {
+        // hack used to report memory usage count
+        return (void *)mem_allocated_cnt;
+    }
+
     void *ptr = __libc_malloc(size + ALIGN);
     if (ptr)  {
         if (tid == 0) tid = gettid();
