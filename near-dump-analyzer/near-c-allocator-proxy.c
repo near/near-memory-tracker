@@ -17,10 +17,11 @@
 
 const int ALLOC_LIMIT = 100;
 
-atomic_size_t mem_allocated_total_bytes = 0;
+static atomic_size_t mem_allocated_total_bytes = 0;
+#define MAX_TID (1024 * 1024)
+
+static atomic_size_t mem_allocated_bytes[MAX_TID];
 thread_local FILE * file = 0;
-thread_local unsigned long long mem_allocated_cnt = 0;
-thread_local unsigned long long mem_allocated_bytes = 0;
 thread_local size_t tid = 0;
 thread_local int getting_trace = 0;
 thread_local int last_size = 0;
@@ -146,22 +147,21 @@ void *malloc(size_t size)
 {
 
 #ifdef COUNT_BYTES
+    if (tid == 0) tid = gettid();
     if (size == (~(size_t)0)) {
         // hack used to report memory usage bytes from all threads
         return (void *)mem_allocated_total_bytes;
     }
     if (size == (~(size_t)0) - 1) {
         // hack used to report memory usage bytes from current thread
-        return (void *)mem_allocated_bytes;
+        return (void *)mem_allocated_bytes[tid];
     }
 
     void *ptr = __libc_malloc(size + ALIGN);
     if (ptr)  {
-        if (tid == 0) tid = gettid();
         struct Header header = { MAGIC, size, tid, (size_t)get_trace(size)};
         *(struct Header*)ptr = header;
-	mem_allocated_cnt += 1;
-	mem_allocated_bytes += size;
+	__atomic_add_fetch(&mem_allocated_bytes[tid % MAX_TID], size, __ATOMIC_SEQ_CST);
 	__atomic_add_fetch(&mem_allocated_total_bytes, size, __ATOMIC_SEQ_CST);
 
         return ptr + ALIGN;
@@ -187,9 +187,9 @@ void free(void *ptr)
 	} else {
             if (ptr) {
     		((struct Header*)ptr)->magic += 0x100;
-                mem_allocated_cnt -= 1;
                 size_t size = ((struct Header*)ptr)->size;
-                mem_allocated_bytes -= size;
+                size_t cur_tid = ((struct Header*)ptr)->tid;
+		__atomic_sub_fetch(&mem_allocated_bytes[cur_tid % MAX_TID], size, __ATOMIC_SEQ_CST);
 		__atomic_sub_fetch(&mem_allocated_total_bytes, size, __ATOMIC_SEQ_CST);
 	    }
 	}
@@ -212,7 +212,8 @@ void *realloc(void *ptr, size_t size)
     }
     if (ptr) {
         size_t size = ((struct Header*)ptr)->size;
-        mem_allocated_bytes -= size;
+        size_t cur_tid = ((struct Header*)ptr)->tid;
+	__atomic_sub_fetch(&mem_allocated_bytes[cur_tid % MAX_TID], size, __ATOMIC_SEQ_CST);
 	__atomic_sub_fetch(&mem_allocated_total_bytes, size, __ATOMIC_SEQ_CST);
     }
 
@@ -231,7 +232,7 @@ void *realloc(void *ptr, size_t size)
     void *nptr = __libc_realloc(ptr, size + ALIGN);
     if (nptr) {
     	   *(struct Header*)nptr = header;
-           mem_allocated_bytes += size;
+           __atomic_add_fetch(&mem_allocated_bytes[tid % MAX_TID], size, __ATOMIC_SEQ_CST);
            __atomic_add_fetch(&mem_allocated_total_bytes, size, __ATOMIC_SEQ_CST);
 
 	   return nptr + ALIGN;
@@ -275,8 +276,7 @@ int posix_memalign(void **memptr, size_t alignment, size_t size)
 
     struct Header header = { MAGIC, size, tid, (size_t)get_trace(size)};
     *(struct Header*)*memptr = header;
-    mem_allocated_cnt += 1;
-    mem_allocated_bytes += size;
+    __atomic_add_fetch(&mem_allocated_bytes[tid % MAX_TID], size, __ATOMIC_SEQ_CST);
     __atomic_add_fetch(&mem_allocated_total_bytes, size, __ATOMIC_SEQ_CST);
 
     *memptr += ALIGN;
