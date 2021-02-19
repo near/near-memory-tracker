@@ -3,6 +3,7 @@
 #define _GNU_SOURCE
 
 
+#include <stdatomic.h>
 #include <stdint.h>
 #include <dlfcn.h>
 #include <stddef.h>
@@ -16,6 +17,7 @@
 
 const int ALLOC_LIMIT = 100;
 
+atomic_size_t mem_allocated_total_bytes = 0;
 thread_local FILE * file = 0;
 thread_local unsigned long long mem_allocated_cnt = 0;
 thread_local unsigned long long mem_allocated_bytes = 0;
@@ -145,12 +147,12 @@ void *malloc(size_t size)
 
 #ifdef COUNT_BYTES
     if (size == (~(size_t)0)) {
-        // hack used to report memory usage bytes
-        return (void *)mem_allocated_bytes;
+        // hack used to report memory usage bytes from all threads
+        return (void *)mem_allocated_total_bytes;
     }
     if (size == (~(size_t)0) - 1) {
-        // hack used to report memory usage count
-        return (void *)mem_allocated_cnt;
+        // hack used to report memory usage bytes from current thread
+        return (void *)mem_allocated_bytes;
     }
 
     void *ptr = __libc_malloc(size + ALIGN);
@@ -160,6 +162,8 @@ void *malloc(size_t size)
         *(struct Header*)ptr = header;
 	mem_allocated_cnt += 1;
 	mem_allocated_bytes += size;
+	__atomic_add_fetch(&mem_allocated_total_bytes, size, __ATOMIC_SEQ_CST);
+
         return ptr + ALIGN;
     }
     return ptr;
@@ -185,6 +189,7 @@ void free(void *ptr)
     		((struct Header*)ptr)->magic += 0x100;
             	mem_allocated_cnt -= 1;
             	mem_allocated_bytes -= ((struct Header*)ptr)->size;
+		__atomic_sub_fetch(&mem_allocated_total_bytes, ((struct Header*)ptr)->size, __ATOMIC_SEQ_CST);
 	    }
 	}
         __libc_free(ptr);
@@ -206,6 +211,7 @@ void *realloc(void *ptr, size_t size)
     }
     if (ptr) {
         mem_allocated_bytes -= ((struct Header*)ptr)->size;
+	__atomic_sub_fetch(&mem_allocated_total_bytes, ((struct Header*)ptr)->size, __ATOMIC_SEQ_CST);
     }
 
     if (tid == 0) tid = gettid();
@@ -224,6 +230,7 @@ void *realloc(void *ptr, size_t size)
     if (nptr) {
     	   *(struct Header*)nptr = header;
            mem_allocated_bytes += size;
+           __atomic_add_fetch(&mem_allocated_total_bytes, size, __ATOMIC_SEQ_CST);
 
 	   return nptr + ALIGN;
     }
