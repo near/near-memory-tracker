@@ -62,7 +62,7 @@ static void thread_init() {
     if (file == NULL) {
 	if (tid == 0) tid = gettid();
 	char buf[1000];
-	sprintf(buf, "logs/%ld", tid);
+	sprintf(buf, "/tmp/dump/logs/%ld", tid);
 	file = fopen(buf, "w");
 	fprintf(file, "initializing tid: %ld\n", tid);
     }
