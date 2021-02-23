@@ -178,7 +178,6 @@ pub fn reset_memory_usage_max() {
     let tid = get_tid();
     let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::SeqCst);
     MEMORY_USAGE_MAX.with(|x| *x.borrow_mut() = memory_usage);
-    MEMORY_USAGE_LAST_REPORT.with(|x| *x.borrow_mut() = memory_usage);
 }
 
 
@@ -191,7 +190,7 @@ unsafe impl GlobalAlloc for MyAllocator {
         let res = JEMALLOC.alloc(new_layout);
 
         let tid = get_tid();
-        let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].fetch_add(layout.size(), Ordering::SeqCst);
+        let memory_usage = layout.size() + MEM_SIZE[tid % COUNTERS_SIZE].fetch_add(layout.size(), Ordering::SeqCst);
         TOTAL_MEMORY_USAGE.fetch_add(layout.size(), Ordering::SeqCst);
         MEM_CNT[tid % COUNTERS_SIZE].fetch_add(1, Ordering::SeqCst);
 
@@ -203,10 +202,11 @@ unsafe impl GlobalAlloc for MyAllocator {
                 let bt = Backtrace::new();
 
                 warn!(
-                    "Thread {} reached new record of memory usage {}MiB\n{:?}",
+                    "Thread {} reached new record of memory usage {}MiB\n{:?} added: {:?}",
                     tid,
                     memory_usage / MEBIBYTE,
                     bt
+                    layout.size() / MEBIBYTE,
                 );
                 IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 0);
             }
