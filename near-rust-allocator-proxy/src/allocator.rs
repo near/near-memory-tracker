@@ -205,7 +205,7 @@ unsafe impl GlobalAlloc for MyAllocator {
                     "Thread {} reached new record of memory usage {}MiB\n{:?} added: {:?}",
                     tid,
                     memory_usage / MEBIBYTE,
-                    bt
+                    bt,
                     layout.size() / MEBIBYTE,
                 );
                 IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 0);
