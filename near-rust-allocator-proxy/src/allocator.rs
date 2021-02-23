@@ -202,10 +202,11 @@ unsafe impl GlobalAlloc for MyAllocator {
                 let bt = Backtrace::new();
 
                 warn!(
-                    "Thread {} reached new record of memory usage {}MiB\n{:?}",
+                    "Thread {} reached new record of memory usage {}MiB\n{:?} added: {:?}",
                     tid,
                     memory_usage / MEBIBYTE,
                     bt
+                    layout.size() / MEBIBYTE,
                 );
                 IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 0);
             }
