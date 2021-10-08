@@ -27,7 +27,6 @@ const ENABLE_STACK_TRACE: bool = true;
 const ENABLE_STACK_TRACE: bool = false;
 
 const COUNTERS_SIZE: usize = 16384;
-static JEMALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 static TOTAL_MEMORY_USAGE: AtomicUsize = AtomicUsize::new(0);
 static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE as usize] = arr![AtomicUsize::new(0); 16384];
 static MEM_CNT: [AtomicUsize; COUNTERS_SIZE as usize] = arr![AtomicUsize::new(0); 16384];
@@ -180,13 +179,22 @@ pub fn reset_memory_usage_max() {
     MEMORY_USAGE_MAX.with(|x| *x.borrow_mut() = memory_usage);
 }
 
-pub struct MyAllocator;
-unsafe impl GlobalAlloc for MyAllocator {
+pub struct MyAllocator<A> {
+    inner: A,
+}
+
+impl<A> MyAllocator<A> {
+    pub const fn new(inner: A) -> MyAllocator<A> {
+        MyAllocator { inner }
+    }
+}
+
+unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let new_layout =
             Layout::from_size_align(layout.size() + HEADER_SIZE, layout.align()).unwrap();
 
-        let res = JEMALLOC.alloc(new_layout);
+        let res = self.inner.alloc(new_layout);
 
         let tid = get_tid();
         let memory_usage = layout.size()
@@ -350,7 +358,7 @@ unsafe impl GlobalAlloc for MyAllocator {
         TOTAL_MEMORY_USAGE.fetch_sub(layout.size(), Ordering::SeqCst);
         MEM_CNT[tid % COUNTERS_SIZE].fetch_sub(1, Ordering::SeqCst);
 
-        JEMALLOC.dealloc(ptr, new_layout);
+        self.inner.dealloc(ptr, new_layout);
     }
 }
 

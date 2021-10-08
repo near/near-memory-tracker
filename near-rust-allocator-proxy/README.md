@@ -5,9 +5,10 @@ See https://doc.rust-lang.org/std/alloc/trait.GlobalAlloc.html
 You can use code below to enable usage of this library:
 ```rust
 use near_rust_allocator_proxy::allocator::MyAllocator;
+use jemallocator::Jemalloc
 
 #[global_allocator]
-static ALLOC: MyAllocator = MyAllocator;
+static ALLOC: MyAllocator<Jemalloc> = MyAllocator::new(Jemalloc);
 ```
 
 # Design
