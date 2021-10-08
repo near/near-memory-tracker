@@ -1,4 +1,3 @@
-use arr_macro::arr;
 use backtrace::Backtrace;
 use libc;
 use log::{info, warn};
@@ -28,8 +27,14 @@ const ENABLE_STACK_TRACE: bool = false;
 
 const COUNTERS_SIZE: usize = 16384;
 static TOTAL_MEMORY_USAGE: AtomicUsize = AtomicUsize::new(0);
-static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE as usize] = arr![AtomicUsize::new(0); 16384];
-static MEM_CNT: [AtomicUsize; COUNTERS_SIZE as usize] = arr![AtomicUsize::new(0); 16384];
+static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE] = unsafe {
+    // SAFETY: Rust [guarantees](https://doc.rust-lang.org/stable/std/sync/atomic/struct.AtomicUsize.html)
+    // that `usize` and `AtomicUsize` have the same representation.
+    std::mem::transmute::<[usize; COUNTERS_SIZE], [AtomicUsize; COUNTERS_SIZE]>([0usize; 16384])
+};
+static MEM_CNT: [AtomicUsize; COUNTERS_SIZE] = unsafe {
+    std::mem::transmute::<[usize; COUNTERS_SIZE], [AtomicUsize; COUNTERS_SIZE]>([0usize; 16384])
+};
 
 static mut SKIP_PTR: [u8; 1 << 20] = [0; 1 << 20];
 static mut CHECKED_PTR: [u8; 1 << 20] = [0; 1 << 20];
