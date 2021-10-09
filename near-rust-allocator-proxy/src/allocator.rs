@@ -1,4 +1,3 @@
-use arr_macro::arr;
 use backtrace::Backtrace;
 use libc;
 use log::{info, warn};
@@ -27,10 +26,15 @@ const ENABLE_STACK_TRACE: bool = true;
 const ENABLE_STACK_TRACE: bool = false;
 
 const COUNTERS_SIZE: usize = 16384;
-static JEMALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 static TOTAL_MEMORY_USAGE: AtomicUsize = AtomicUsize::new(0);
-static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE as usize] = arr![AtomicUsize::new(0); 16384];
-static MEM_CNT: [AtomicUsize; COUNTERS_SIZE as usize] = arr![AtomicUsize::new(0); 16384];
+static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE] = unsafe {
+    // SAFETY: Rust [guarantees](https://doc.rust-lang.org/stable/std/sync/atomic/struct.AtomicUsize.html)
+    // that `usize` and `AtomicUsize` have the same representation.
+    std::mem::transmute::<[usize; COUNTERS_SIZE], [AtomicUsize; COUNTERS_SIZE]>([0usize; 16384])
+};
+static MEM_CNT: [AtomicUsize; COUNTERS_SIZE] = unsafe {
+    std::mem::transmute::<[usize; COUNTERS_SIZE], [AtomicUsize; COUNTERS_SIZE]>([0usize; 16384])
+};
 
 static mut SKIP_PTR: [u8; 1 << 20] = [0; 1 << 20];
 static mut CHECKED_PTR: [u8; 1 << 20] = [0; 1 << 20];
@@ -67,7 +71,7 @@ pub static NTHREADS: AtomicUsize = AtomicUsize::new(0);
 pub fn get_tid() -> usize {
     let res = TID.with(|t| {
         if *t.borrow() == 0 {
-                *t.borrow_mut() = nix::unistd::gettid().as_raw() as usize;
+            *t.borrow_mut() = nix::unistd::gettid().as_raw() as usize;
         }
         *t.borrow()
     });
@@ -180,21 +184,32 @@ pub fn reset_memory_usage_max() {
     MEMORY_USAGE_MAX.with(|x| *x.borrow_mut() = memory_usage);
 }
 
+pub struct MyAllocator<A> {
+    inner: A,
+}
 
-pub struct MyAllocator;
-unsafe impl GlobalAlloc for MyAllocator {
+impl<A> MyAllocator<A> {
+    pub const fn new(inner: A) -> MyAllocator<A> {
+        MyAllocator { inner }
+    }
+}
+
+unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let new_layout =
             Layout::from_size_align(layout.size() + HEADER_SIZE, layout.align()).unwrap();
 
-        let res = JEMALLOC.alloc(new_layout);
+        let res = self.inner.alloc(new_layout);
 
         let tid = get_tid();
-        let memory_usage = layout.size() + MEM_SIZE[tid % COUNTERS_SIZE].fetch_add(layout.size(), Ordering::SeqCst);
+        let memory_usage = layout.size()
+            + MEM_SIZE[tid % COUNTERS_SIZE].fetch_add(layout.size(), Ordering::SeqCst);
         TOTAL_MEMORY_USAGE.fetch_add(layout.size(), Ordering::SeqCst);
         MEM_CNT[tid % COUNTERS_SIZE].fetch_add(1, Ordering::SeqCst);
 
-        if PRINT_STACK_TRACE_ON_MEMORY_SPIKE && memory_usage > REPORT_USAGE_INTERVAL + MEMORY_USAGE_LAST_REPORT.with(|x| *x.borrow()) {
+        if PRINT_STACK_TRACE_ON_MEMORY_SPIKE
+            && memory_usage > REPORT_USAGE_INTERVAL + MEMORY_USAGE_LAST_REPORT.with(|x| *x.borrow())
+        {
             if IN_TRACE.with(|in_trace| *in_trace.borrow()) == 0 {
                 IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 1);
                 MEMORY_USAGE_LAST_REPORT.with(|x| *x.borrow_mut() = memory_usage);
@@ -221,7 +236,9 @@ unsafe impl GlobalAlloc for MyAllocator {
 
         if ENABLE_STACK_TRACE && IN_TRACE.with(|in_trace| *in_trace.borrow()) == 0 {
             IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 1);
-            if layout.size() >= MIN_BLOCK_SIZE || rand::thread_rng().gen_range(0, 100) < SMALL_BLOCK_TRACE_PROBABILITY {
+            if layout.size() >= MIN_BLOCK_SIZE
+                || rand::thread_rng().gen_range(0, 100) < SMALL_BLOCK_TRACE_PROBABILITY
+            {
                 let size = libc::backtrace(ary.as_ptr() as *mut *mut c_void, MAX_STACK as i32);
                 ary[0] = 0 as *mut c_void;
                 for i in 1..min(size as usize, MAX_STACK) {
@@ -237,30 +254,33 @@ unsafe impl GlobalAlloc for MyAllocator {
                         }
                         if SAVE_STACK_TRACES_TO_FILE {
                             backtrace::resolve(ary[i], |symbol| {
-                                    let fname = format!("/tmp/logs/{}", tid);
-                                    if let Ok(mut f) =
-                                    OpenOptions::new().create(true).write(true).append(true).open(fname)
-                                    {
-                                        if let Some(path) = symbol.filename() {
-                                            f.write(
-                                                format!(
-                                                    "PATH {:?} {} {}\n",
-                                                    ary[i],
-                                                    symbol.lineno().unwrap_or(0),
-                                                    path.to_str().unwrap_or("<UNKNOWN>")
-                                                )
-                                                    .as_bytes(),
+                                let fname = format!("/tmp/logs/{}", tid);
+                                if let Ok(mut f) = OpenOptions::new()
+                                    .create(true)
+                                    .write(true)
+                                    .append(true)
+                                    .open(fname)
+                                {
+                                    if let Some(path) = symbol.filename() {
+                                        f.write(
+                                            format!(
+                                                "PATH {:?} {} {}\n",
+                                                ary[i],
+                                                symbol.lineno().unwrap_or(0),
+                                                path.to_str().unwrap_or("<UNKNOWN>")
                                             )
-                                                .unwrap();
-                                        }
-                                        if let Some(name) = symbol.name() {
-                                            f.write(
-                                                format!("SYMBOL {:?} {}\n", ary[i], name.to_string())
-                                                    .as_bytes(),
-                                            )
-                                                .unwrap();
-                                        }
+                                            .as_bytes(),
+                                        )
+                                        .unwrap();
                                     }
+                                    if let Some(name) = symbol.name() {
+                                        f.write(
+                                            format!("SYMBOL {:?} {}\n", ary[i], name.to_string())
+                                                .as_bytes(),
+                                        )
+                                        .unwrap();
+                                    }
+                                }
                             });
                         }
 
@@ -274,13 +294,17 @@ unsafe impl GlobalAlloc for MyAllocator {
                         if SAVE_STACK_TRACES_TO_FILE {
                             let fname = format!("/tmp/logs/{}", tid);
 
-                            if let Ok(mut f) =
-                            OpenOptions::new().create(true).write(true).append(true).open(fname)
+                            if let Ok(mut f) = OpenOptions::new()
+                                .create(true)
+                                .write(true)
+                                .append(true)
+                                .open(fname)
                             {
-                                f.write(format!("STACK_FOR {:?}\n", addr).as_bytes()).unwrap();
+                                f.write(format!("STACK_FOR {:?}\n", addr).as_bytes())
+                                    .unwrap();
                                 let ary2: [*mut c_void; 256] = [0 as *mut c_void; 256];
-                                let size2 =
-                                    libc::backtrace(ary2.as_ptr() as *mut *mut c_void, 256) as usize;
+                                let size2 = libc::backtrace(ary2.as_ptr() as *mut *mut c_void, 256)
+                                    as usize;
                                 for i in 0..size2 {
                                     let addr2 = ary2[i];
 
@@ -292,7 +316,7 @@ unsafe impl GlobalAlloc for MyAllocator {
                                                 format!("STACK {:?} {:?} {:?}\n", i, addr2, name)
                                                     .as_bytes(),
                                             )
-                                                .unwrap();
+                                            .unwrap();
                                         }
                                     });
                                 }
@@ -339,7 +363,7 @@ unsafe impl GlobalAlloc for MyAllocator {
         TOTAL_MEMORY_USAGE.fetch_sub(layout.size(), Ordering::SeqCst);
         MEM_CNT[tid % COUNTERS_SIZE].fetch_sub(1, Ordering::SeqCst);
 
-        JEMALLOC.dealloc(ptr, new_layout);
+        self.inner.dealloc(ptr, new_layout);
     }
 }
 

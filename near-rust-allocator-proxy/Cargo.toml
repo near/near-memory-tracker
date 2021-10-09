@@ -1,6 +1,6 @@
 [package]
 name = "near-rust-allocator-proxy"
-version = "0.2.9"
+version = "0.3.0"
 authors = ["Near Inc <hello@nearprotocol.com>", "Piotr Mikulski <piotr@near.org>"]
 description = "Rust allocator proxy with added header"
 readme = "README.md"
@@ -14,10 +14,5 @@ edition = "2018"
 rand = "0.7.3"
 libc = "0.2.65"
 backtrace = "0.3"
-arr_macro = "0.1.3"
 log = "0.4"
-jemalloc-sys = "0.3.2"
-jemallocator = { version = "0.3"  }
 nix = "0.15.0"
-
-
