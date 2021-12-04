@@ -4,6 +4,7 @@ use log::{info, warn};
 use rand::Rng;
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::RefCell;
+use std::cell::Cell;
 use std::cmp::{max, min};
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -58,7 +59,7 @@ const HEADER_SIZE: usize = mem::size_of::<AllocHeader>();
 const MAGIC_RUST: usize = 0x12345678991100;
 
 thread_local! {
-    pub static TID: RefCell<usize> = RefCell::new(0);
+    pub static TID: Cell<usize> = Cell::new(0);
     pub static IN_TRACE: RefCell<usize> = RefCell::new(0);
     pub static MEMORY_USAGE_MAX: RefCell<usize> = RefCell::new(0);
     pub static MEMORY_USAGE_LAST_REPORT: RefCell<usize> = RefCell::new(0);
@@ -69,13 +70,14 @@ pub static NTHREADS: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(target_os = "linux")]
 pub fn get_tid() -> usize {
-    let res = TID.with(|t| {
-        if *t.borrow() == 0 {
-            *t.borrow_mut() = nix::unistd::gettid().as_raw() as usize;
+    TID.with(|f| {
+        let mut v = f.get();
+        if v == 0 {
+            v = nix::unistd::gettid().as_raw() as usize;
+            f.set(v)
         }
-        *t.borrow()
-    });
-    res
+        v
+    })
 }
 
 #[cfg(not(target_os = "linux"))]
