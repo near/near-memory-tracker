@@ -11,11 +11,11 @@ categories = ["memory-management"]
 edition = "2021"
 
 [dependencies]
-rand = "0.7.3"
-libc = "0.2.65"
 backtrace = "0.3"
-log = "0.4"
+libc = "0.2.65"
 nix = "0.15.0"
+rand = "0.7.3"
+tracing = "0.1.13"
 
 [dev-dependencies]
 criterion = "0.3.5"

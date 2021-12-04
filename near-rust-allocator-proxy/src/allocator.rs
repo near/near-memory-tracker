@@ -1,6 +1,5 @@
 use backtrace::Backtrace;
 use libc;
-use log::{info, warn};
 use rand::Rng;
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::Cell;
@@ -10,6 +9,7 @@ use std::io::Write;
 use std::mem;
 use std::os::raw::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tracing::{info, warn};
 
 const MEBIBYTE: usize = 1024 * 1024;
 const MIN_BLOCK_SIZE: usize = 1000;
@@ -294,14 +294,10 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                         if SAVE_STACK_TRACES_TO_FILE {
                             let fname = format!("/tmp/logs/{}", tid);
 
-                            if let Ok(mut f) = OpenOptions::new()
-                                .create(true)
-                                .write(true)
-                                .append(true)
-                                .open(fname)
+                            if let Ok(mut f) =
+                                OpenOptions::new().create(true).write(true).append(true).open(fname)
                             {
-                                f.write(format!("STACK_FOR {:?}\n", addr).as_bytes())
-                                    .unwrap();
+                                f.write(format!("STACK_FOR {:?}\n", addr).as_bytes()).unwrap();
                                 let ary2: [*mut c_void; 256] =
                                     [std::ptr::null_mut::<c_void>(); 256];
                                 let size2 = libc::backtrace(ary2.as_ptr() as *mut *mut c_void, 256)
