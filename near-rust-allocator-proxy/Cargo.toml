@@ -8,7 +8,7 @@ keywords = ["memory", "tracker", "allocation", "header"]
 repository = "https://github.com/near/near-memory-tracker"
 license = "Apache-2.0"
 categories = ["memory-management"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 rand = "0.7.3"
