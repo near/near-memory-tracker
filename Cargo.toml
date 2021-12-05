@@ -1,6 +1,7 @@
 [workspace]
 members = [
-    "near-rust-allocator-proxy"
+    "near-rust-allocator-proxy",
+    "dump-analyzer"
 ]
 
 [profile.release]
