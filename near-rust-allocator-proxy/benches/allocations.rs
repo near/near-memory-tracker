@@ -1,5 +1,4 @@
 use near_rust_allocator_proxy::allocator::MyAllocator;
-use tikv_jemallocator;
 
 #[global_allocator]
 static ALLOC: MyAllocator<tikv_jemallocator::Jemalloc> =

@@ -98,10 +98,10 @@ pub fn murmur64(mut h: u64) -> u64 {
     h ^= h >> 33;
     h = h.overflowing_mul(0xc4ceb9fe1a85ec53).0;
     h ^= h >> 33;
-    return h;
+    h
 }
 
-const IGNORE_START: &'static [&'static str] = &[
+const IGNORE_START: &[&str] = &[
     "__rg_",
     "_ZN5actix",
     "_ZN5alloc",
@@ -116,7 +116,7 @@ const IGNORE_START: &'static [&'static str] = &[
     "_ZN8smallvec",
 ];
 
-const IGNORE_INSIDE: &'static [&'static str] = &[
+const IGNORE_INSIDE: &[&str] = &[
     "$LT$actix..",
     "$LT$alloc..",
     "$LT$base64..",
@@ -154,7 +154,7 @@ fn skip_ptr(addr: *mut c_void) -> bool {
         }
     });
 
-    return found;
+    found
 }
 
 pub fn total_memory_usage() -> usize {
@@ -163,18 +163,16 @@ pub fn total_memory_usage() -> usize {
 
 pub fn current_thread_memory_usage() -> usize {
     let tid = get_tid();
-    let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::SeqCst);
-    memory_usage
+
+    MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::SeqCst)
 }
 
 pub fn thread_memory_usage(tid: usize) -> usize {
-    let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::SeqCst);
-    memory_usage
+    MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::SeqCst)
 }
 
 pub fn thread_memory_count(tid: usize) -> usize {
-    let memory_cnt = MEM_CNT[tid % COUNTERS_SIZE].load(Ordering::SeqCst);
-    memory_cnt
+    MEM_CNT[tid % COUNTERS_SIZE].load(Ordering::SeqCst)
 }
 
 pub fn current_thread_peak_memory_usage() -> usize {
@@ -212,29 +210,28 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
 
         if PRINT_STACK_TRACE_ON_MEMORY_SPIKE
             && memory_usage > REPORT_USAGE_INTERVAL + MEMORY_USAGE_LAST_REPORT.with(|x| x.get())
+            && IN_TRACE.with(|in_trace| in_trace.get()) == 0
         {
-            if IN_TRACE.with(|in_trace| in_trace.get()) == 0 {
-                IN_TRACE.with(|in_trace| in_trace.set(1));
-                MEMORY_USAGE_LAST_REPORT.with(|x| x.set(memory_usage));
+            IN_TRACE.with(|in_trace| in_trace.set(1));
+            MEMORY_USAGE_LAST_REPORT.with(|x| x.set(memory_usage));
 
-                let bt = Backtrace::new();
+            let bt = Backtrace::new();
 
-                warn!(
-                    "Thread {} reached new record of memory usage {}MiB\n{:?} added: {:?}",
-                    tid,
-                    memory_usage / MEBIBYTE,
-                    bt,
-                    layout.size() / MEBIBYTE,
-                );
-                IN_TRACE.with(|in_trace| in_trace.set(0));
-            }
+            warn!(
+                "Thread {} reached new record of memory usage {}MiB\n{:?} added: {:?}",
+                tid,
+                memory_usage / MEBIBYTE,
+                bt,
+                layout.size() / MEBIBYTE,
+            );
+            IN_TRACE.with(|in_trace| in_trace.set(0));
         }
         if memory_usage > MEMORY_USAGE_MAX.with(|x| x.get()) {
             MEMORY_USAGE_MAX.with(|x| x.set(memory_usage));
         }
 
         let mut addr: Option<*mut c_void> = Some(MISSING_TRACE);
-        let mut ary: [*mut c_void; MAX_STACK + 1] = [0 as *mut c_void; MAX_STACK + 1];
+        let mut ary: [*mut c_void; MAX_STACK + 1] = [std::ptr::null_mut::<c_void>(); MAX_STACK + 1];
         let mut chosen_i = 0;
 
         if ENABLE_STACK_TRACE && IN_TRACE.with(|in_trace| in_trace.get()) == 0 {
@@ -243,16 +240,16 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                 || rand::thread_rng().gen_range(0, 100) < SMALL_BLOCK_TRACE_PROBABILITY
             {
                 let size = libc::backtrace(ary.as_ptr() as *mut *mut c_void, MAX_STACK as i32);
-                ary[0] = 0 as *mut c_void;
+                ary[0] = std::ptr::null_mut::<c_void>();
                 for i in 1..min(size as usize, MAX_STACK) {
                     addr = Some(ary[i] as *mut c_void);
                     chosen_i = i;
                     if ary[i] < SKIP_ADDR as *mut c_void {
                         let hash = murmur64(ary[i] as u64) % (1 << 23);
-                        if (SKIP_PTR[(hash / 8) as usize] >> hash % 8) & 1 == 1 {
+                        if (SKIP_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
                             continue;
                         }
-                        if (CHECKED_PTR[(hash / 8) as usize] >> hash % 8) & 1 == 1 {
+                        if (CHECKED_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
                             break;
                         }
                         if SAVE_STACK_TRACES_TO_FILE {
@@ -289,10 +286,10 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
 
                         let should_skip = skip_ptr(ary[i]);
                         if should_skip {
-                            SKIP_PTR[(hash / 8) as usize] |= 1 << hash % 8;
+                            SKIP_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
                             continue;
                         }
-                        CHECKED_PTR[(hash / 8) as usize] |= 1 << hash % 8;
+                        CHECKED_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
 
                         if SAVE_STACK_TRACES_TO_FILE {
                             let fname = format!("/tmp/logs/{}", tid);
@@ -305,7 +302,8 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                             {
                                 f.write(format!("STACK_FOR {:?}\n", addr).as_bytes())
                                     .unwrap();
-                                let ary2: [*mut c_void; 256] = [0 as *mut c_void; 256];
+                                let ary2: [*mut c_void; 256] =
+                                    [std::ptr::null_mut::<c_void>(); 256];
                                 let size2 = libc::backtrace(ary2.as_ptr() as *mut *mut c_void, 256)
                                     as usize;
                                 for i in 0..size2 {
@@ -334,8 +332,8 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
             IN_TRACE.with(|in_trace| in_trace.set(0));
         }
 
-        let mut stack = [0 as *mut c_void; STACK_SIZE];
-        stack[0] = addr.unwrap_or(0 as *mut c_void);
+        let mut stack = [std::ptr::null_mut::<c_void>(); STACK_SIZE];
+        stack[0] = addr.unwrap_or(std::ptr::null_mut::<c_void>());
         for i in 1..STACK_SIZE {
             stack[i] =
                 ary[min(MAX_STACK as isize, max(0, chosen_i as isize + i as isize)) as usize];
@@ -350,7 +348,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
 
         *(res as *mut AllocHeader) = header;
 
-        res.offset(HEADER_SIZE as isize)
+        res.add(HEADER_SIZE)
     }
 
     unsafe fn dealloc(&self, mut ptr: *mut u8, layout: Layout) {
