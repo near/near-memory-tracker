@@ -241,11 +241,16 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
             {
                 let size = libc::backtrace(ary.as_ptr() as *mut *mut c_void, MAX_STACK as i32);
                 ary[0] = std::ptr::null_mut::<c_void>();
-                for i in 1..min(size as usize, MAX_STACK) {
-                    addr = Some(ary[i] as *mut c_void);
+                for (i, &item) in ary
+                    .iter()
+                    .enumerate()
+                    .take(min(size as usize, MAX_STACK))
+                    .skip(1)
+                {
+                    addr = Some(item as *mut c_void);
                     chosen_i = i;
-                    if ary[i] < SKIP_ADDR as *mut c_void {
-                        let hash = murmur64(ary[i] as u64) % (1 << 23);
+                    if item < SKIP_ADDR as *mut c_void {
+                        let hash = murmur64(item as u64) % (1 << 23);
                         if (SKIP_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
                             continue;
                         }
@@ -253,7 +258,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                             break;
                         }
                         if SAVE_STACK_TRACES_TO_FILE {
-                            backtrace::resolve(ary[i], |symbol| {
+                            backtrace::resolve(item, |symbol| {
                                 let fname = format!("/tmp/logs/{}", tid);
                                 if let Ok(mut f) = OpenOptions::new()
                                     .create(true)
@@ -265,7 +270,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                                         f.write(
                                             format!(
                                                 "PATH {:?} {} {}\n",
-                                                ary[i],
+                                                item,
                                                 symbol.lineno().unwrap_or(0),
                                                 path.to_str().unwrap_or("<UNKNOWN>")
                                             )
@@ -275,7 +280,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                                     }
                                     if let Some(name) = symbol.name() {
                                         f.write(
-                                            format!("SYMBOL {:?} {}\n", ary[i], name.to_string())
+                                            format!("SYMBOL {:?} {}\n", item, name.to_string())
                                                 .as_bytes(),
                                         )
                                         .unwrap();
@@ -284,7 +289,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                             });
                         }
 
-                        let should_skip = skip_ptr(ary[i]);
+                        let should_skip = skip_ptr(item);
                         if should_skip {
                             SKIP_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
                             continue;
@@ -306,9 +311,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                                     [std::ptr::null_mut::<c_void>(); 256];
                                 let size2 = libc::backtrace(ary2.as_ptr() as *mut *mut c_void, 256)
                                     as usize;
-                                for i in 0..size2 {
-                                    let addr2 = ary2[i];
-
+                                for (i, &addr2) in ary2.iter().enumerate().take(size2) {
                                     backtrace::resolve(addr2, |symbol| {
                                         if let Some(name) = symbol.name() {
                                             let name = name.as_str().unwrap_or("");
