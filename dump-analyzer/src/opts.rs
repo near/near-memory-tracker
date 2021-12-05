@@ -1,6 +1,5 @@
-use std::io::Empty;
-use clap::{AppSettings, Clap};
 use anyhow::Result;
+use clap::{AppSettings, Clap};
 
 #[derive(Clap, Debug)]
 #[clap(version = "0.1")]
@@ -20,7 +19,7 @@ pub(super) enum SubCommand {
 pub(crate) struct EmptyCmd {}
 
 impl EmptyCmd {
-    fn handle(&self) -> Result<()> {
+    pub(crate) fn handle(&self) -> Result<()> {
         println!("Hello World");
         Ok(())
     }
