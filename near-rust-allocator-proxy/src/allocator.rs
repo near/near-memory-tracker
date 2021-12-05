@@ -262,23 +262,18 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                                     .open(fname)
                                 {
                                     if let Some(path) = symbol.filename() {
-                                        f.write(
-                                            format!(
-                                                "PATH {:?} {} {}\n",
-                                                ary[i],
-                                                symbol.lineno().unwrap_or(0),
-                                                path.to_str().unwrap_or("<UNKNOWN>")
-                                            )
-                                            .as_bytes(),
+                                        write!(
+                                            f,
+                                            "PATH {:?} {} {}\n",
+                                            ary[i],
+                                            symbol.lineno().unwrap_or(0),
+                                            path.to_str().unwrap_or("<UNKNOWN>")
                                         )
                                         .unwrap();
                                     }
                                     if let Some(name) = symbol.name() {
-                                        f.write(
-                                            format!("SYMBOL {:?} {}\n", ary[i], name.to_string())
-                                                .as_bytes(),
-                                        )
-                                        .unwrap();
+                                        write!(f, "SYMBOL {:?} {}\n", ary[i], name.to_string())
+                                            .unwrap();
                                     }
                                 }
                             });
@@ -297,7 +292,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                             if let Ok(mut f) =
                                 OpenOptions::new().create(true).write(true).append(true).open(fname)
                             {
-                                f.write(format!("STACK_FOR {:?}\n", addr).as_bytes()).unwrap();
+                                write!(f, "STACK_FOR {:?}\n", addr).unwrap();
                                 let ary2: [*mut c_void; 256] =
                                     [std::ptr::null_mut::<c_void>(); 256];
                                 let size2 = libc::backtrace(ary2.as_ptr() as *mut *mut c_void, 256)
@@ -309,11 +304,8 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                                         if let Some(name) = symbol.name() {
                                             let name = name.as_str().unwrap_or("");
 
-                                            f.write(
-                                                format!("STACK {:?} {:?} {:?}\n", i, addr2, name)
-                                                    .as_bytes(),
-                                            )
-                                            .unwrap();
+                                            write!(f, "STACK {:?} {:?} {:?}\n", i, addr2, name)
+                                                .unwrap();
                                         }
                                     });
                                 }
