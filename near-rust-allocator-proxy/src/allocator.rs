@@ -3,7 +3,7 @@ use libc;
 use log::{info, warn};
 use rand::Rng;
 use std::alloc::{GlobalAlloc, Layout};
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::cmp::{max, min};
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -58,10 +58,10 @@ const HEADER_SIZE: usize = mem::size_of::<AllocHeader>();
 const MAGIC_RUST: usize = 0x12345678991100;
 
 thread_local! {
-    pub static TID: RefCell<usize> = RefCell::new(0);
-    pub static IN_TRACE: RefCell<usize> = RefCell::new(0);
-    pub static MEMORY_USAGE_MAX: RefCell<usize> = RefCell::new(0);
-    pub static MEMORY_USAGE_LAST_REPORT: RefCell<usize> = RefCell::new(0);
+    pub static TID: Cell<usize> = Cell::new(0);
+    pub static IN_TRACE: Cell<usize> = Cell::new(0);
+    pub static MEMORY_USAGE_MAX: Cell<usize> = Cell::new(0);
+    pub static MEMORY_USAGE_LAST_REPORT: Cell<usize> = Cell::new(0);
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -69,22 +69,25 @@ pub static NTHREADS: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(target_os = "linux")]
 pub fn get_tid() -> usize {
-    let res = TID.with(|t| {
-        if *t.borrow() == 0 {
-            *t.borrow_mut() = nix::unistd::gettid().as_raw() as usize;
+    TID.with(|f| {
+        let mut v = f.get();
+        if v == 0 {
+            v = nix::unistd::gettid().as_raw() as usize;
+            f.set(v)
         }
-        *t.borrow()
-    });
-    res
+        v
+    })
 }
 
 #[cfg(not(target_os = "linux"))]
 pub fn get_tid() -> usize {
     let res = TID.with(|t| {
-        if *t.borrow() == 0 {
-            *t.borrow_mut() = NTHREADS.fetch_add(1, Ordering::SeqCst) as usize;
+        let v = t.get();
+        if v == 0 {
+            v = NTHREADS.fetch_add(1, Ordering::SeqCst) as usize;
+            t.set(v);
         }
-        *t.borrow()
+        v
     });
     res
 }
@@ -175,13 +178,13 @@ pub fn thread_memory_count(tid: usize) -> usize {
 }
 
 pub fn current_thread_peak_memory_usage() -> usize {
-    MEMORY_USAGE_MAX.with(|x| *x.borrow())
+    MEMORY_USAGE_MAX.with(|x| x.get())
 }
 
 pub fn reset_memory_usage_max() {
     let tid = get_tid();
     let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::SeqCst);
-    MEMORY_USAGE_MAX.with(|x| *x.borrow_mut() = memory_usage);
+    MEMORY_USAGE_MAX.with(|x| x.set(memory_usage));
 }
 
 pub struct MyAllocator<A> {
@@ -208,11 +211,11 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
         MEM_CNT[tid % COUNTERS_SIZE].fetch_add(1, Ordering::SeqCst);
 
         if PRINT_STACK_TRACE_ON_MEMORY_SPIKE
-            && memory_usage > REPORT_USAGE_INTERVAL + MEMORY_USAGE_LAST_REPORT.with(|x| *x.borrow())
+            && memory_usage > REPORT_USAGE_INTERVAL + MEMORY_USAGE_LAST_REPORT.with(|x| x.get())
         {
-            if IN_TRACE.with(|in_trace| *in_trace.borrow()) == 0 {
-                IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 1);
-                MEMORY_USAGE_LAST_REPORT.with(|x| *x.borrow_mut() = memory_usage);
+            if IN_TRACE.with(|in_trace| in_trace.get()) == 0 {
+                IN_TRACE.with(|in_trace| in_trace.set(1));
+                MEMORY_USAGE_LAST_REPORT.with(|x| x.set(memory_usage));
 
                 let bt = Backtrace::new();
 
@@ -223,19 +226,19 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                     bt,
                     layout.size() / MEBIBYTE,
                 );
-                IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 0);
+                IN_TRACE.with(|in_trace| in_trace.set(0));
             }
         }
-        if memory_usage > MEMORY_USAGE_MAX.with(|x| *x.borrow()) {
-            MEMORY_USAGE_MAX.with(|x| *x.borrow_mut() = memory_usage);
+        if memory_usage > MEMORY_USAGE_MAX.with(|x| x.get()) {
+            MEMORY_USAGE_MAX.with(|x| x.set(memory_usage));
         }
 
         let mut addr: Option<*mut c_void> = Some(MISSING_TRACE);
         let mut ary: [*mut c_void; MAX_STACK + 1] = [0 as *mut c_void; MAX_STACK + 1];
         let mut chosen_i = 0;
 
-        if ENABLE_STACK_TRACE && IN_TRACE.with(|in_trace| *in_trace.borrow()) == 0 {
-            IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 1);
+        if ENABLE_STACK_TRACE && IN_TRACE.with(|in_trace| in_trace.get()) == 0 {
+            IN_TRACE.with(|in_trace| in_trace.set(1));
             if layout.size() >= MIN_BLOCK_SIZE
                 || rand::thread_rng().gen_range(0, 100) < SMALL_BLOCK_TRACE_PROBABILITY
             {
@@ -328,7 +331,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
             } else {
                 addr = Some(SKIPPED_TRACE);
             }
-            IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 0);
+            IN_TRACE.with(|in_trace| in_trace.set(0));
         }
 
         let mut stack = [0 as *mut c_void; STACK_SIZE];
