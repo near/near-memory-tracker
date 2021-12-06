@@ -7,10 +7,7 @@ use tracing::info;
 use tracing_subscriber::util::SubscriberInitExt;
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .finish()
-        .init();
+    tracing_subscriber::fmt().with_writer(std::io::stderr).finish().init();
     info!("init");
     let opts: Opts = Opts::parse();
 
