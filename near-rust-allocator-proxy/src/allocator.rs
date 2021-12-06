@@ -1,6 +1,5 @@
 use backtrace::Backtrace;
 use libc;
-use log::{info, warn};
 use rand::Rng;
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::Cell;
@@ -10,6 +9,7 @@ use std::io::Write;
 use std::mem;
 use std::os::raw::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tracing::{info, warn};
 
 const MEBIBYTE: usize = 1024 * 1024;
 const MIN_BLOCK_SIZE: usize = 1000;
