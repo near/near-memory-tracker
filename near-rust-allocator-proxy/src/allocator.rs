@@ -8,6 +8,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::mem;
 use std::os::raw::c_void;
+use std::ptr::null_mut;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::{info, warn};
 
@@ -231,7 +232,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
         }
 
         let mut addr: Option<*mut c_void> = Some(MISSING_TRACE);
-        let mut ary: [*mut c_void; MAX_STACK + 1] = [std::ptr::null_mut::<c_void>(); MAX_STACK + 1];
+        let mut ary: [*mut c_void; MAX_STACK + 1] = [null_mut::<c_void>(); MAX_STACK + 1];
         let mut chosen_i = 0;
 
         if ENABLE_STACK_TRACE && IN_TRACE.with(|in_trace| in_trace.get()) == 0 {
@@ -240,7 +241,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                 || rand::thread_rng().gen_range(0, 100) < SMALL_BLOCK_TRACE_PROBABILITY
             {
                 let size = libc::backtrace(ary.as_ptr() as *mut *mut c_void, MAX_STACK as i32);
-                ary[0] = std::ptr::null_mut::<c_void>();
+                ary[0] = null_mut::<c_void>();
                 for i in 1..min(size as usize, MAX_STACK) {
                     addr = Some(ary[i] as *mut c_void);
                     chosen_i = i;
@@ -293,8 +294,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                                 OpenOptions::new().create(true).write(true).append(true).open(fname)
                             {
                                 write!(f, "STACK_FOR {:?}\n", addr).unwrap();
-                                let ary2: [*mut c_void; 256] =
-                                    [std::ptr::null_mut::<c_void>(); 256];
+                                let ary2: [*mut c_void; 256] = [null_mut::<c_void>(); 256];
                                 let size2 = libc::backtrace(ary2.as_ptr() as *mut *mut c_void, 256)
                                     as usize;
                                 for i in 0..size2 {
@@ -320,8 +320,8 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
             IN_TRACE.with(|in_trace| in_trace.set(0));
         }
 
-        let mut stack = [std::ptr::null_mut::<c_void>(); STACK_SIZE];
-        stack[0] = addr.unwrap_or(std::ptr::null_mut::<c_void>());
+        let mut stack = [null_mut::<c_void>(); STACK_SIZE];
+        stack[0] = addr.unwrap_or(null_mut::<c_void>());
         for i in 1..STACK_SIZE {
             stack[i] =
                 ary[min(MAX_STACK as isize, max(0, chosen_i as isize + i as isize)) as usize];
