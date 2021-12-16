@@ -54,8 +54,9 @@ struct AllocHeader {
     stack: [*mut c_void; STACK_SIZE],
 }
 
-const HEADER_SIZE: usize = mem::size_of::<AllocHeader>();
+const ALLOC_HEADER_SIZE: usize = mem::size_of::<AllocHeader>();
 const MAGIC_RUST: usize = 0x12345678991100;
+const FREED_MAGIC: usize = 0x100;
 
 thread_local! {
     pub static TID: Cell<usize> = Cell::new(0);
@@ -197,44 +198,83 @@ impl<A> MyAllocator<A> {
 
 unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let tid = get_tid();
         let new_layout =
-            Layout::from_size_align(layout.size() + HEADER_SIZE, layout.align()).unwrap();
+            Layout::from_size_align(layout.size() + ALLOC_HEADER_SIZE, layout.align()).unwrap();
 
         let res = self.inner.alloc(new_layout);
+        let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].fetch_add(layout.size(), Ordering::SeqCst)
+            + layout.size();
 
-        let tid = get_tid();
-        let memory_usage = layout.size()
-            + MEM_SIZE[tid % COUNTERS_SIZE].fetch_add(layout.size(), Ordering::SeqCst);
         TOTAL_MEMORY_USAGE.fetch_add(layout.size(), Ordering::SeqCst);
         MEM_CNT[tid % COUNTERS_SIZE].fetch_add(1, Ordering::SeqCst);
 
-        if PRINT_STACK_TRACE_ON_MEMORY_SPIKE
-            && memory_usage > REPORT_USAGE_INTERVAL + MEMORY_USAGE_LAST_REPORT.with(|x| x.get())
+        if memory_usage > MEMORY_USAGE_MAX.with(|x| x.get()) {
+            MEMORY_USAGE_MAX.with(|x| x.set(memory_usage));
+        }
+
+        if PRINT_STACK_TRACE_ON_MEMORY_SPIKE {
+            Self::print_stack_trace_on_memory_spike(layout, tid, memory_usage)
+        }
+
+        let mut header = AllocHeader {
+            magic: (MAGIC_RUST + STACK_SIZE) as u64,
+            size: layout.size() as u64,
+            tid: tid as u64,
+            stack: [null_mut::<c_void>(); STACK_SIZE],
+        };
+
+        if ENABLE_STACK_TRACE {
+            Self::compute_stack_trace(layout, tid, &mut header.stack);
+        }
+        *(res as *mut AllocHeader) = header;
+
+        res.add(ALLOC_HEADER_SIZE)
+    }
+
+    unsafe fn dealloc(&self, mut ptr: *mut u8, layout: Layout) {
+        let new_layout =
+            Layout::from_size_align(layout.size() + ALLOC_HEADER_SIZE, layout.align()).unwrap();
+
+        ptr = ptr.offset(-(ALLOC_HEADER_SIZE as isize));
+
+        (*(ptr as *mut AllocHeader)).magic = (MAGIC_RUST + STACK_SIZE + FREED_MAGIC) as u64;
+        let tid: usize = (*(ptr as *mut AllocHeader)).tid as usize;
+
+        MEM_SIZE[tid % COUNTERS_SIZE].fetch_sub(layout.size(), Ordering::SeqCst);
+        TOTAL_MEMORY_USAGE.fetch_sub(layout.size(), Ordering::SeqCst);
+        MEM_CNT[tid % COUNTERS_SIZE].fetch_sub(1, Ordering::SeqCst);
+
+        self.inner.dealloc(ptr, new_layout);
+    }
+}
+
+impl<A: GlobalAlloc> MyAllocator<A> {
+    unsafe fn print_stack_trace_on_memory_spike(layout: Layout, tid: usize, memory_usage: usize) {
+        if memory_usage > REPORT_USAGE_INTERVAL + MEMORY_USAGE_LAST_REPORT.with(|x| x.get())
             && IN_TRACE.with(|in_trace| in_trace.get()) == 0
         {
             IN_TRACE.with(|in_trace| in_trace.set(1));
             MEMORY_USAGE_LAST_REPORT.with(|x| x.set(memory_usage));
-
-            let bt = Backtrace::new();
 
             tracing::warn!(
                 message = "reached new record of memory usage",
                 tid,
                 memory_usage_mb = memory_usage / MEBIBYTE,
                 added_mb = layout.size() / MEBIBYTE,
-                ?bt,
+                bt = ?Backtrace::new(),
             );
             IN_TRACE.with(|in_trace| in_trace.set(0));
         }
-        if memory_usage > MEMORY_USAGE_MAX.with(|x| x.get()) {
-            MEMORY_USAGE_MAX.with(|x| x.set(memory_usage));
-        }
+    }
+}
 
-        let mut addr: Option<*mut c_void> = Some(MISSING_TRACE);
-        let mut ary: [*mut c_void; MAX_STACK + 1] = [null_mut::<c_void>(); MAX_STACK + 1];
-        let mut chosen_i = 0;
-
-        if ENABLE_STACK_TRACE && IN_TRACE.with(|in_trace| in_trace.get()) == 0 {
+impl<A: GlobalAlloc> MyAllocator<A> {
+    unsafe fn compute_stack_trace(layout: Layout, tid: usize, stack: &mut [*mut c_void; 1]) {
+        if IN_TRACE.with(|in_trace| in_trace.get()) == 0 {
+            let mut ary: [*mut c_void; MAX_STACK + 1] = [null_mut::<c_void>(); MAX_STACK + 1];
+            let mut addr: Option<*mut c_void> = Some(MISSING_TRACE);
+            let mut chosen_i = 0;
             IN_TRACE.with(|in_trace| in_trace.set(1));
             if layout.size() >= MIN_BLOCK_SIZE
                 || rand::thread_rng().gen_range(0, 100) < SMALL_BLOCK_TRACE_PROBABILITY
@@ -317,41 +357,12 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                 addr = Some(SKIPPED_TRACE);
             }
             IN_TRACE.with(|in_trace| in_trace.set(0));
+            stack[0] = addr.unwrap_or(null_mut::<c_void>());
+            for i in 1..stack.len() {
+                stack[i] =
+                    ary[min(MAX_STACK as isize, max(0, chosen_i as isize + i as isize)) as usize];
+            }
         }
-
-        let mut stack = [null_mut::<c_void>(); STACK_SIZE];
-        stack[0] = addr.unwrap_or(null_mut::<c_void>());
-        for i in 1..STACK_SIZE {
-            stack[i] =
-                ary[min(MAX_STACK as isize, max(0, chosen_i as isize + i as isize)) as usize];
-        }
-
-        let header = AllocHeader {
-            magic: (MAGIC_RUST + STACK_SIZE) as u64,
-            size: layout.size() as u64,
-            tid: tid as u64,
-            stack,
-        };
-
-        *(res as *mut AllocHeader) = header;
-
-        res.add(HEADER_SIZE)
-    }
-
-    unsafe fn dealloc(&self, mut ptr: *mut u8, layout: Layout) {
-        let new_layout =
-            Layout::from_size_align(layout.size() + HEADER_SIZE, layout.align()).unwrap();
-
-        ptr = ptr.offset(-(HEADER_SIZE as isize));
-
-        (*(ptr as *mut AllocHeader)).magic = (MAGIC_RUST + STACK_SIZE + 0x100) as u64;
-        let tid: usize = (*(ptr as *mut AllocHeader)).tid as usize;
-
-        MEM_SIZE[tid % COUNTERS_SIZE].fetch_sub(layout.size(), Ordering::SeqCst);
-        TOTAL_MEMORY_USAGE.fetch_sub(layout.size(), Ordering::SeqCst);
-        MEM_CNT[tid % COUNTERS_SIZE].fetch_sub(1, Ordering::SeqCst);
-
-        self.inner.dealloc(ptr, new_layout);
     }
 }
 
