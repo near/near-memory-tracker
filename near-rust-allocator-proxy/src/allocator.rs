@@ -59,11 +59,11 @@ const MAGIC_RUST: usize = 0x12345678991100;
 const FREED_MAGIC: usize = 0x100;
 
 thread_local! {
-    pub static TID: Cell<usize> = Cell::new(0);
-    pub static IN_TRACE: Cell<usize> = Cell::new(0);
-    pub static MEMORY_USAGE_MAX: Cell<usize> = Cell::new(0);
-    pub static MEMORY_USAGE_LAST_REPORT: Cell<usize> = Cell::new(0);
-    pub static NUM_ALLOCATIONS: Cell<usize> = Cell::new(0);
+    static TID: Cell<usize> = Cell::new(0);
+    static IN_TRACE: Cell<usize> = Cell::new(0);
+    static MEMORY_USAGE_MAX: Cell<usize> = Cell::new(0);
+    static MEMORY_USAGE_LAST_REPORT: Cell<usize> = Cell::new(0);
+    static NUM_ALLOCATIONS: Cell<usize> = Cell::new(0);
 }
 
 #[cfg(target_os = "linux")]
@@ -79,7 +79,7 @@ pub fn get_tid() -> usize {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub static NTHREADS: AtomicUsize = AtomicUsize::new(0);
+static NTHREADS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(not(target_os = "linux"))]
 pub fn get_tid() -> usize {
     let res = TID.with(|t| {
