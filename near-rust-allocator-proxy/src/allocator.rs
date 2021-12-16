@@ -103,17 +103,17 @@ pub fn murmur64(mut h: u64) -> u64 {
 
 const IGNORE_START: &[&str] = &[
     "__rg_",
+    "_ZN10tokio_util",
+    "_ZN20reed_solomon_erasure",
+    "_ZN3std",
+    "_ZN4core",
     "_ZN5actix",
     "_ZN5alloc",
+    "_ZN5tokio",
     "_ZN6base64",
     "_ZN6cached",
-    "_ZN4core",
-    "_ZN9hashbrown",
-    "_ZN20reed_solomon_erasure",
-    "_ZN5tokio",
-    "_ZN10tokio_util",
-    "_ZN3std",
     "_ZN8smallvec",
+    "_ZN9hashbrown",
 ];
 
 const IGNORE_INSIDE: &[&str] = &[
@@ -124,10 +124,10 @@ const IGNORE_INSIDE: &[&str] = &[
     "$LT$core..",
     "$LT$hashbrown..",
     "$LT$reed_solomon_erasure..",
-    "$LT$tokio..",
-    "$LT$tokio_util..",
     "$LT$serde_json..",
     "$LT$std..",
+    "$LT$tokio..",
+    "$LT$tokio_util..",
     "$LT$tracing_subscriber..",
 ];
 
@@ -341,8 +341,9 @@ impl<A: GlobalAlloc> MyAllocator<A> {
 
     unsafe fn save_trace_to_file(tid: usize, ptr: *mut c_void) {
         backtrace::resolve(ptr, |symbol| {
-            let fname = format!("/tmp/logs/{}", tid);
-            if let Ok(mut f) = OpenOptions::new().create(true).write(true).append(true).open(fname)
+            let file_name = format!("/tmp/logs/{}", tid);
+            if let Ok(mut f) =
+                OpenOptions::new().create(true).write(true).append(true).open(file_name)
             {
                 if let Some(path) = symbol.filename() {
                     writeln!(
@@ -367,9 +368,9 @@ pub fn print_counters_ary() {
     let mut total_cnt: usize = 0;
     let mut total_size: usize = 0;
     for idx in 0..COUNTERS_SIZE {
-        let val: usize = MEM_SIZE.get(idx).unwrap().load(Ordering::SeqCst);
+        let val = MEM_SIZE[idx].load(Ordering::SeqCst);
         if val != 0 {
-            let cnt = MEM_CNT.get(idx).unwrap().load(Ordering::SeqCst);
+            let cnt = MEM_CNT[idx].load(Ordering::SeqCst);
             total_cnt += cnt;
             tracing::info!(message = "COUNTERS", idx, cnt, val);
             total_size += val;
@@ -395,6 +396,7 @@ mod test {
         MyAllocator::new(tikv_jemallocator::Jemalloc);
 
     #[test]
+    // Works only if run alone.
     fn test_allocator() {
         let layout = Layout::from_size_align(32, 1).unwrap();
         let ptr = unsafe { ALLOC.alloc(layout) };
