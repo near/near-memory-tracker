@@ -1,6 +1,6 @@
 [package]
 name = "near-rust-allocator-proxy"
-version = "0.3.1"
+version = "0.4.0"
 authors = ["Near Inc <hello@nearprotocol.com>", "Piotr Mikulski <piotr@near.org>"]
 description = "Rust allocator proxy with added header"
 readme = "README.md"
