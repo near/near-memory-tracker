@@ -10,7 +10,6 @@ use std::mem;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tracing::{info, warn};
 
 const MEBIBYTE: usize = 1024 * 1024;
 const MIN_BLOCK_SIZE: usize = 1000;
@@ -218,12 +217,12 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
 
             let bt = Backtrace::new();
 
-            warn!(
-                "Thread {} reached new record of memory usage {}MiB\n{:?} added: {:?}",
+            tracing::warn!(
+                message = "reached new record of memory usage",
                 tid,
-                memory_usage / MEBIBYTE,
-                bt,
-                layout.size() / MEBIBYTE,
+                memory_usage_mb = memory_usage / MEBIBYTE,
+                added_mb = layout.size() / MEBIBYTE,
+                ?bt,
             );
             IN_TRACE.with(|in_trace| in_trace.set(0));
         }
@@ -357,7 +356,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
 }
 
 pub fn print_counters_ary() {
-    info!("tid {}", get_tid());
+    tracing::info!(message = "tid", tid = get_tid());
     let mut total_cnt: usize = 0;
     let mut total_size: usize = 0;
     for idx in 0..COUNTERS_SIZE {
@@ -365,9 +364,21 @@ pub fn print_counters_ary() {
         if val != 0 {
             let cnt = MEM_CNT.get(idx).unwrap().load(Ordering::SeqCst);
             total_cnt += cnt;
-            info!("COUNTERS {}: {} {}", idx, cnt, val);
+            tracing::info!(message = "COUNTERS", idx, cnt, val);
             total_size += val;
         }
     }
-    info!("COUNTERS TOTAL {} {}", total_cnt, total_size);
+    tracing::info!(message = "COUNTERS TOTAL", total_cnt, total_size);
+}
+
+#[cfg(test)]
+mod test {
+    use crate::allocator::print_counters_ary;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    #[test]
+    fn test_print_counters_ary() {
+        tracing_subscriber::fmt().with_writer(std::io::stderr).finish().init();
+        print_counters_ary();
+    }
 }
