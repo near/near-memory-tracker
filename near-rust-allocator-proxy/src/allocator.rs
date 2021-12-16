@@ -103,17 +103,17 @@ pub fn murmur64(mut h: u64) -> u64 {
 
 const IGNORE_START: &[&str] = &[
     "__rg_",
+    "_ZN10tokio_util",
+    "_ZN20reed_solomon_erasure",
+    "_ZN3std",
+    "_ZN4core",
     "_ZN5actix",
     "_ZN5alloc",
+    "_ZN5tokio",
     "_ZN6base64",
     "_ZN6cached",
-    "_ZN4core",
-    "_ZN9hashbrown",
-    "_ZN20reed_solomon_erasure",
-    "_ZN5tokio",
-    "_ZN10tokio_util",
-    "_ZN3std",
     "_ZN8smallvec",
+    "_ZN9hashbrown",
 ];
 
 const IGNORE_INSIDE: &[&str] = &[
@@ -124,10 +124,10 @@ const IGNORE_INSIDE: &[&str] = &[
     "$LT$core..",
     "$LT$hashbrown..",
     "$LT$reed_solomon_erasure..",
-    "$LT$tokio..",
-    "$LT$tokio_util..",
     "$LT$serde_json..",
     "$LT$std..",
+    "$LT$tokio..",
+    "$LT$tokio_util..",
     "$LT$tracing_subscriber..",
 ];
 
@@ -137,21 +137,16 @@ fn skip_ptr(addr: *mut c_void) -> bool {
     }
     let mut found = false;
     backtrace::resolve(addr, |symbol| {
-        if let Some(name) = symbol.name() {
-            let name = name.as_str().unwrap_or("");
-            for &s in IGNORE_START {
-                if name.starts_with(s) {
-                    found = true;
-                    break;
-                }
-            }
-            for &s in IGNORE_INSIDE {
-                if name.contains(s) {
-                    found = true;
-                    break;
-                }
-            }
-        }
+        found = found
+            || symbol
+                .name()
+                .map(|name| name.as_str())
+                .flatten()
+                .map(|name| {
+                    IGNORE_START.iter().filter(|s: &&&str| name.starts_with(**s)).any(|_| true)
+                        || IGNORE_INSIDE.iter().filter(|s: &&&str| name.contains(**s)).any(|_| true)
+                })
+                .unwrap_or_default()
     });
 
     found
@@ -207,13 +202,11 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
 
         MEM_CNT[tid % COUNTERS_SIZE].fetch_add(1, Ordering::SeqCst);
 
-        if memory_usage > MEMORY_USAGE_MAX.with(|x| x.get()) {
-            MEMORY_USAGE_MAX.with(|x| x.set(memory_usage));
-        }
-
-        if PRINT_STACK_TRACE_ON_MEMORY_SPIKE {
-            Self::print_stack_trace_on_memory_spike(layout, tid, memory_usage)
-        }
+        MEMORY_USAGE_MAX.with(|val| {
+            if val.get() < memory_usage {
+                val.set(memory_usage);
+            }
+        });
 
         let mut header = AllocHeader {
             magic: (MAGIC_RUST + STACK_SIZE) as u64,
@@ -222,9 +215,18 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
             stack: [null_mut::<c_void>(); STACK_SIZE],
         };
 
-        if ENABLE_STACK_TRACE {
-            Self::compute_stack_trace(layout, tid, &mut header.stack);
-        }
+        IN_TRACE.with(|in_trace| {
+            if in_trace.replace(1) != 0 {
+                return;
+            }
+            if PRINT_STACK_TRACE_ON_MEMORY_SPIKE {
+                Self::print_stack_trace_on_memory_spike(layout, tid, memory_usage)
+            }
+            if ENABLE_STACK_TRACE {
+                Self::compute_stack_trace(layout, tid, &mut header.stack);
+            }
+            in_trace.set(0);
+        });
         *(res as *mut AllocHeader) = header;
 
         res.add(ALLOC_HEADER_SIZE)
@@ -248,84 +250,55 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
 
 impl<A: GlobalAlloc> MyAllocator<A> {
     unsafe fn print_stack_trace_on_memory_spike(layout: Layout, tid: usize, memory_usage: usize) {
-        if memory_usage > REPORT_USAGE_INTERVAL + MEMORY_USAGE_LAST_REPORT.with(|x| x.get())
-            && IN_TRACE.with(|in_trace| in_trace.get()) == 0
-        {
-            IN_TRACE.with(|in_trace| in_trace.set(1));
-            MEMORY_USAGE_LAST_REPORT.with(|x| x.set(memory_usage));
-
-            tracing::warn!(
-                message = "reached new record of memory usage",
-                tid,
-                memory_usage_mb = memory_usage / MEBIBYTE,
-                added_mb = layout.size() / MEBIBYTE,
-                bt = ?Backtrace::new(),
-            );
-            IN_TRACE.with(|in_trace| in_trace.set(0));
-        }
+        MEMORY_USAGE_LAST_REPORT.with(|memory_usage_last_report| {
+            if memory_usage > REPORT_USAGE_INTERVAL + memory_usage_last_report.get() {
+                memory_usage_last_report.set(memory_usage);
+                tracing::warn!(
+                    message = "reached new record of memory usage",
+                    tid,
+                    memory_usage_mb = memory_usage / MEBIBYTE,
+                    added_mb = layout.size() / MEBIBYTE,
+                    bt = ?Backtrace::new(),
+                );
+            }
+        });
     }
 }
 
 impl<A: GlobalAlloc> MyAllocator<A> {
     unsafe fn compute_stack_trace(layout: Layout, tid: usize, stack: &mut [*mut c_void; 1]) {
-        if IN_TRACE.with(|in_trace| in_trace.get()) == 0 {
-            IN_TRACE.with(|in_trace| in_trace.set(1));
-            let mut ary: [*mut c_void; MAX_STACK + 1] = [null_mut::<c_void>(); MAX_STACK + 1];
-            let mut addr: Option<*mut c_void> = Some(MISSING_TRACE);
-            let mut chosen_i = 0;
-            if layout.size() >= MIN_BLOCK_SIZE
-                || NUM_ALLOCATIONS.with(|key| {
-                    let val = key.get();
-                    key.set(val + 1);
-                    val
-                }) % 100
-                    < SMALL_BLOCK_TRACE_PROBABILITY
-            {
-                let size = libc::backtrace(ary.as_ptr() as *mut *mut c_void, MAX_STACK as i32);
-                ary[0] = null_mut::<c_void>();
-                for i in 1..min(size as usize, MAX_STACK) {
-                    addr = Some(ary[i] as *mut c_void);
-                    chosen_i = i;
-                    if ary[i] < SKIP_ADDR as *mut c_void {
-                        let hash = murmur64(ary[i] as u64) % (1 << 23);
-                        if (SKIP_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
-                            continue;
-                        }
-                        if (CHECKED_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
-                            break;
-                        }
-                        if SAVE_STACK_TRACES_TO_FILE {
-                            backtrace::resolve(ary[i], |symbol| {
-                                let fname = format!("/tmp/logs/{}", tid);
-                                if let Ok(mut f) = OpenOptions::new()
-                                    .create(true)
-                                    .write(true)
-                                    .append(true)
-                                    .open(fname)
-                                {
-                                    if let Some(path) = symbol.filename() {
-                                        writeln!(
-                                            f,
-                                            "PATH {:?} {} {}",
-                                            ary[i],
-                                            symbol.lineno().unwrap_or(0),
-                                            path.to_str().unwrap_or("<UNKNOWN>")
-                                        )
-                                        .unwrap();
-                                    }
-                                    if let Some(name) = symbol.name() {
-                                        writeln!(f, "SYMBOL {:?} {}", ary[i], name.to_string())
-                                            .unwrap();
-                                    }
-                                }
-                            });
-                        }
+        let ary: [*mut c_void; MAX_STACK] = [null_mut::<c_void>(); MAX_STACK];
+        let mut addr: Option<*mut c_void> = Some(MISSING_TRACE);
+        let mut chosen_i = 0;
+        if layout.size() >= MIN_BLOCK_SIZE
+            || NUM_ALLOCATIONS.with(|key| {
+                let val = key.get();
+                key.set(val + 1);
+                val
+            }) % 100
+                < SMALL_BLOCK_TRACE_PROBABILITY
+        {
+            // Calls to `libc::backtrace` are the bottleneck
+            let size = libc::backtrace(ary.as_ptr() as *mut *mut c_void, MAX_STACK as i32);
+            for i in 1..min(size as usize, MAX_STACK) {
+                let ptr = ary[i];
+                addr = Some(ptr as *mut c_void);
+                chosen_i = i;
+                if ptr < SKIP_ADDR as *mut c_void {
+                    let hash = murmur64(ptr as u64) % (1 << 23);
+                    if (SKIP_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
+                        continue;
+                    }
+                    if (CHECKED_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
+                        break;
+                    }
+                    if SAVE_STACK_TRACES_TO_FILE {
+                        Self::save_trace_to_file(tid, ptr);
+                    }
 
-                        let should_skip = skip_ptr(ary[i]);
-                        if should_skip {
-                            SKIP_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
-                            continue;
-                        }
+                    if skip_ptr(ptr) {
+                        SKIP_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
+                    } else {
                         CHECKED_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
 
                         if SAVE_STACK_TRACES_TO_FILE {
@@ -355,16 +328,38 @@ impl<A: GlobalAlloc> MyAllocator<A> {
                         break;
                     }
                 }
-            } else {
-                addr = Some(SKIPPED_TRACE);
             }
-            IN_TRACE.with(|in_trace| in_trace.set(0));
-            stack[0] = addr.unwrap_or(null_mut::<c_void>());
-            for i in 1..stack.len() {
-                stack[i] =
-                    ary[min(MAX_STACK as isize, max(0, chosen_i as isize + i as isize)) as usize];
-            }
+        } else {
+            addr = Some(SKIPPED_TRACE);
         }
+        stack[0] = addr.unwrap_or(null_mut::<c_void>());
+        for i in 1..stack.len() {
+            stack[i] =
+                ary[min(MAX_STACK as isize, max(0, chosen_i as isize + i as isize)) as usize];
+        }
+    }
+
+    unsafe fn save_trace_to_file(tid: usize, ptr: *mut c_void) {
+        backtrace::resolve(ptr, |symbol| {
+            let file_name = format!("/tmp/logs/{}", tid);
+            if let Ok(mut f) =
+                OpenOptions::new().create(true).write(true).append(true).open(file_name)
+            {
+                if let Some(path) = symbol.filename() {
+                    writeln!(
+                        f,
+                        "PATH {:?} {} {}",
+                        ptr,
+                        symbol.lineno().unwrap_or_default(),
+                        path.to_str().unwrap_or("<UNKNOWN>")
+                    )
+                    .unwrap();
+                }
+                if let Some(name) = symbol.name() {
+                    writeln!(f, "SYMBOL {:?} {}", ptr, name.to_string()).unwrap();
+                }
+            }
+        });
     }
 }
 
@@ -373,9 +368,9 @@ pub fn print_counters_ary() {
     let mut total_cnt: usize = 0;
     let mut total_size: usize = 0;
     for idx in 0..COUNTERS_SIZE {
-        let val: usize = MEM_SIZE.get(idx).unwrap().load(Ordering::SeqCst);
+        let val = MEM_SIZE[idx].load(Ordering::SeqCst);
         if val != 0 {
-            let cnt = MEM_CNT.get(idx).unwrap().load(Ordering::SeqCst);
+            let cnt = MEM_CNT[idx].load(Ordering::SeqCst);
             total_cnt += cnt;
             tracing::info!(message = "COUNTERS", idx, cnt, val);
             total_size += val;
@@ -401,6 +396,7 @@ mod test {
         MyAllocator::new(tikv_jemallocator::Jemalloc);
 
     #[test]
+    // Works only if run alone.
     fn test_allocator() {
         let layout = Layout::from_size_align(32, 1).unwrap();
         let ptr = unsafe { ALLOC.alloc(layout) };
