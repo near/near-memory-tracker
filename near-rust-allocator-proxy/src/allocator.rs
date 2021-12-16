@@ -12,9 +12,12 @@ const MEBIBYTE: usize = 1024 * 1024;
 const MIN_BLOCK_SIZE: usize = 1000;
 const SMALL_BLOCK_TRACE_PROBABILITY: u64 = 10;
 const REPORT_USAGE_INTERVAL: usize = 512 * MEBIBYTE;
-const SKIP_ADDR: u64 = 0x700000000000;
+const SKIP_ADDR: *mut c_void = 0x700000000000 as *mut c_void;
+/// Should be a configurable option.
 const PRINT_STACK_TRACE_ON_MEMORY_SPIKE: bool = true;
-
+/// Should be a configurable option.
+const SAVE_STACK_TRACES_TO_FILE: bool = false;
+/// Should be a configurable option.
 #[cfg(target_os = "linux")]
 const ENABLE_STACK_TRACE: bool = true;
 
@@ -41,7 +44,6 @@ static mut SKIP_PTR: [u8; 1 << CACHE_BITS] = [0; 1 << CACHE_BITS];
 static mut CHECKED_PTR: [u8; 1 << CACHE_BITS] = [0; 1 << CACHE_BITS];
 
 const STACK_SIZE: usize = 1;
-const SAVE_STACK_TRACES_TO_FILE: bool = false;
 
 const SKIPPED_TRACE: *mut c_void = 1 as *mut c_void;
 const MISSING_TRACE: *mut c_void = 2 as *mut c_void;
@@ -60,10 +62,10 @@ const FREED_MAGIC: usize = 0x100;
 
 thread_local! {
     static TID: Cell<usize> = Cell::new(0);
-    static IN_TRACE: Cell<usize> = Cell::new(0);
     static MEMORY_USAGE_MAX: Cell<usize> = Cell::new(0);
     static MEMORY_USAGE_LAST_REPORT: Cell<usize> = Cell::new(0);
     static NUM_ALLOCATIONS: Cell<usize> = Cell::new(0);
+    static IN_TRACE: Cell<usize> = Cell::new(0);
 }
 
 #[cfg(target_os = "linux")]
@@ -134,9 +136,6 @@ const IGNORE_INSIDE: &[&str] = &[
 ];
 
 fn skip_ptr(addr: *mut c_void) -> bool {
-    if addr as u64 >= SKIP_ADDR {
-        return true;
-    }
     let mut found = false;
     backtrace::resolve(addr, |symbol| {
         found = found
@@ -256,11 +255,11 @@ impl<A: GlobalAlloc> MyAllocator<A> {
             if memory_usage > REPORT_USAGE_INTERVAL + memory_usage_last_report.get() {
                 memory_usage_last_report.set(memory_usage);
                 tracing::warn!(
-                    message = "reached new record of memory usage",
                     tid,
                     memory_usage_mb = memory_usage / MEBIBYTE,
                     added_mb = layout.size() / MEBIBYTE,
                     bt = ?Backtrace::new(),
+                    "reached new record of memory usage",
                 );
             }
         });
@@ -269,9 +268,14 @@ impl<A: GlobalAlloc> MyAllocator<A> {
 
 impl<A: GlobalAlloc> MyAllocator<A> {
     #[inline]
-    unsafe fn compute_stack_trace(layout: Layout, tid: usize, stack: &mut [*mut c_void; 1]) {
+    unsafe fn compute_stack_trace(
+        layout: Layout,
+        tid: usize,
+        stack: &mut [*mut c_void; STACK_SIZE],
+    ) {
         let should_skip_trace = layout.size() < MIN_BLOCK_SIZE
             && murmur64(NUM_ALLOCATIONS.with(|key| {
+                // key.update() is still unstable
                 let val = key.get();
                 key.set(val + 1);
                 val

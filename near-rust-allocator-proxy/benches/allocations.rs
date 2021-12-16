@@ -1,4 +1,4 @@
-use near_rust_allocator_proxy::allocator::MyAllocator;
+use near_rust_allocator_proxy::MyAllocator;
 
 #[global_allocator]
 static ALLOC: MyAllocator<tikv_jemallocator::Jemalloc> =
@@ -9,7 +9,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 fn alloc_1024(c: &mut Criterion) {
     c.bench_function("alloc_1024", |b| {
         b.iter(|| {
-            black_box(Vec::<u8>::with_capacity(1024));
+            black_box(vec![1024, 0]);
         })
     });
 }
