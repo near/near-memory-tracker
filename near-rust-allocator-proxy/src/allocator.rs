@@ -373,12 +373,26 @@ pub fn print_counters_ary() {
 
 #[cfg(test)]
 mod test {
-    use crate::allocator::print_counters_ary;
+    use crate::allocator::{print_counters_ary, MyAllocator};
+    use std::alloc::{GlobalAlloc, Layout};
+    use std::ptr::null_mut;
     use tracing_subscriber::util::SubscriberInitExt;
 
     #[test]
     fn test_print_counters_ary() {
         tracing_subscriber::fmt().with_writer(std::io::stderr).finish().init();
         print_counters_ary();
+    }
+
+    static ALLOC: MyAllocator<tikv_jemallocator::Jemalloc> =
+        MyAllocator::new(tikv_jemallocator::Jemalloc);
+
+    #[test]
+    fn test_allocator() {
+        let layout = Layout::from_size_align(32, 1).unwrap();
+        let ptr = unsafe { ALLOC.alloc(layout) };
+        assert_ne!(ptr, null_mut());
+
+        unsafe { ALLOC.dealloc(ptr, layout) };
     }
 }
