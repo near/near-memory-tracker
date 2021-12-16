@@ -266,15 +266,16 @@ impl<A: GlobalAlloc> MyAllocator<A> {
 impl<A: GlobalAlloc> MyAllocator<A> {
     #[inline]
     unsafe fn compute_stack_trace(layout: Layout, tid: usize, stack: &mut [*mut c_void; 1]) {
-        if layout.size() >= MIN_BLOCK_SIZE
+        let should_compute_trace = layout.size() >= MIN_BLOCK_SIZE
             || murmur64(NUM_ALLOCATIONS.with(|key| {
                 let val = key.get();
                 key.set(val + 1);
                 val
             }) as u64)
                 % 1024
-                < SMALL_BLOCK_TRACE_PROBABILITY
-        {
+                < SMALL_BLOCK_TRACE_PROBABILITY;
+
+        if should_compute_trace {
             stack[0] = MISSING_TRACE;
             backtrace::trace(|frame| {
                 let ptr = frame.ip();
@@ -288,17 +289,17 @@ impl<A: GlobalAlloc> MyAllocator<A> {
                         return false;
                     }
 
-                    if skip_ptr(ptr) {
+                    return if skip_ptr(ptr) {
                         SKIP_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
-                        return true;
+                        true
                     } else {
                         CHECKED_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
 
                         if SAVE_STACK_TRACES_TO_FILE {
                             Self::save_trace_to_file(tid, ptr);
                         }
-                        return false;
-                    }
+                        false
+                    };
                 }
 
                 true
