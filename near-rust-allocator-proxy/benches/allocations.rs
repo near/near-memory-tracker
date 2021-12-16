@@ -6,16 +6,25 @@ static ALLOC: MyAllocator<tikv_jemallocator::Jemalloc> =
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-fn small_alloc_benchmark(c: &mut Criterion) {
-    c.bench_function("small_alloc_benchmark", |b| {
+fn alloc_1024(c: &mut Criterion) {
+    c.bench_function("alloc_1024", |b| {
         b.iter(|| {
-            black_box(Vec::<usize>::with_capacity(128));
+            black_box(Vec::<u8>::with_capacity(1024));
         })
     });
 }
 
-criterion_group!(benches, small_alloc_benchmark);
+fn alloc_32(c: &mut Criterion) {
+    c.bench_function("alloc_32", |b| {
+        b.iter(|| {
+            black_box(Vec::<u8>::with_capacity(32));
+        })
+    });
+}
+
+criterion_group!(benches, alloc_32, alloc_1024);
 criterion_main!(benches);
 /*
-small_alloc_benchmark   time:   [1.8438 us 1.8477 us 1.8528 us]
+alloc_32                time:   [38.494 ns 38.525 ns 38.557 ns]
+alloc_1024              time:   [2.0461 us 2.0477 us 2.0494 us]
  */
