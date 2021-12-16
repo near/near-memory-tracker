@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 const MEBIBYTE: usize = 1024 * 1024;
 const MIN_BLOCK_SIZE: usize = 1000;
-const SMALL_BLOCK_TRACE_PROBABILITY: usize = 10;
+const SMALL_BLOCK_TRACE_PROBABILITY: u64 = 10;
 const REPORT_USAGE_INTERVAL: usize = 512 * MEBIBYTE;
 const SKIP_ADDR: u64 = 0x700000000000;
 const PRINT_STACK_TRACE_ON_MEMORY_SPIKE: bool = true;
@@ -267,11 +267,12 @@ impl<A: GlobalAlloc> MyAllocator<A> {
     #[inline]
     unsafe fn compute_stack_trace(layout: Layout, tid: usize, stack: &mut [*mut c_void; 1]) {
         if layout.size() >= MIN_BLOCK_SIZE
-            || NUM_ALLOCATIONS.with(|key| {
+            || murmur64(NUM_ALLOCATIONS.with(|key| {
                 let val = key.get();
                 key.set(val + 1);
                 val
-            }) % 1024
+            }) as u64)
+                % 1024
                 < SMALL_BLOCK_TRACE_PROBABILITY
         {
             stack[0] = MISSING_TRACE;
