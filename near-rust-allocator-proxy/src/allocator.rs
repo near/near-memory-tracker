@@ -263,9 +263,9 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                                     .open(fname)
                                 {
                                     if let Some(path) = symbol.filename() {
-                                        write!(
+                                        writeln!(
                                             f,
-                                            "PATH {:?} {} {}\n",
+                                            "PATH {:?} {} {}",
                                             ary[i],
                                             symbol.lineno().unwrap_or(0),
                                             path.to_str().unwrap_or("<UNKNOWN>")
@@ -273,7 +273,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                                         .unwrap();
                                     }
                                     if let Some(name) = symbol.name() {
-                                        write!(f, "SYMBOL {:?} {}\n", ary[i], name.to_string())
+                                        writeln!(f, "SYMBOL {:?} {}", ary[i], name.to_string())
                                             .unwrap();
                                     }
                                 }
@@ -293,7 +293,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                             if let Ok(mut f) =
                                 OpenOptions::new().create(true).write(true).append(true).open(fname)
                             {
-                                write!(f, "STACK_FOR {:?}\n", addr).unwrap();
+                                writeln!(f, "STACK_FOR {:?}", addr).unwrap();
                                 let ary2: [*mut c_void; 256] = [null_mut::<c_void>(); 256];
                                 let size2 = libc::backtrace(ary2.as_ptr() as *mut *mut c_void, 256)
                                     as usize;
@@ -304,7 +304,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                                         if let Some(name) = symbol.name() {
                                             let name = name.as_str().unwrap_or("");
 
-                                            write!(f, "STACK {:?} {:?} {:?}\n", i, addr2, name)
+                                            writeln!(f, "STACK {:?} {:?} {:?}", i, addr2, name)
                                                 .unwrap();
                                         }
                                     });
