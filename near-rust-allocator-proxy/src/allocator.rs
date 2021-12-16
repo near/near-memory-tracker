@@ -26,14 +26,19 @@ const COUNTERS_SIZE: usize = 16384;
 static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE] = unsafe {
     // SAFETY: Rust [guarantees](https://doc.rust-lang.org/stable/std/sync/atomic/struct.AtomicUsize.html)
     // that `usize` and `AtomicUsize` have the same representation.
-    std::mem::transmute::<[usize; COUNTERS_SIZE], [AtomicUsize; COUNTERS_SIZE]>([0usize; 16384])
+    std::mem::transmute::<[usize; COUNTERS_SIZE], [AtomicUsize; COUNTERS_SIZE]>(
+        [0usize; COUNTERS_SIZE],
+    )
 };
 static MEM_CNT: [AtomicUsize; COUNTERS_SIZE] = unsafe {
-    std::mem::transmute::<[usize; COUNTERS_SIZE], [AtomicUsize; COUNTERS_SIZE]>([0usize; 16384])
+    std::mem::transmute::<[usize; COUNTERS_SIZE], [AtomicUsize; COUNTERS_SIZE]>(
+        [0usize; COUNTERS_SIZE],
+    )
 };
 
-static mut SKIP_PTR: [u8; 1 << 20] = [0; 1 << 20];
-static mut CHECKED_PTR: [u8; 1 << 20] = [0; 1 << 20];
+const CACHE_BITS: usize = 20;
+static mut SKIP_PTR: [u8; 1 << CACHE_BITS] = [0; 1 << CACHE_BITS];
+static mut CHECKED_PTR: [u8; 1 << CACHE_BITS] = [0; 1 << CACHE_BITS];
 
 const STACK_SIZE: usize = 1;
 const SAVE_STACK_TRACES_TO_FILE: bool = false;
@@ -61,9 +66,6 @@ thread_local! {
     pub static NUM_ALLOCATIONS: Cell<usize> = Cell::new(0);
 }
 
-#[cfg(not(target_os = "linux"))]
-pub static NTHREADS: AtomicUsize = AtomicUsize::new(0);
-
 #[cfg(target_os = "linux")]
 pub fn get_tid() -> usize {
     TID.with(|f| {
@@ -76,6 +78,8 @@ pub fn get_tid() -> usize {
     })
 }
 
+#[cfg(not(target_os = "linux"))]
+pub static NTHREADS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(not(target_os = "linux"))]
 pub fn get_tid() -> usize {
     let res = TID.with(|t| {
@@ -266,47 +270,44 @@ impl<A: GlobalAlloc> MyAllocator<A> {
 impl<A: GlobalAlloc> MyAllocator<A> {
     #[inline]
     unsafe fn compute_stack_trace(layout: Layout, tid: usize, stack: &mut [*mut c_void; 1]) {
-        let should_compute_trace = layout.size() >= MIN_BLOCK_SIZE
-            || murmur64(NUM_ALLOCATIONS.with(|key| {
+        let should_skip_trace = layout.size() < MIN_BLOCK_SIZE
+            && murmur64(NUM_ALLOCATIONS.with(|key| {
                 let val = key.get();
                 key.set(val + 1);
                 val
             }) as u64)
                 % 1024
-                < SMALL_BLOCK_TRACE_PROBABILITY;
+                >= SMALL_BLOCK_TRACE_PROBABILITY;
 
-        if should_compute_trace {
-            stack[0] = MISSING_TRACE;
-            backtrace::trace(|frame| {
-                let ptr = frame.ip();
-                stack[0] = ptr as *mut c_void;
-                if ptr < SKIP_ADDR as *mut c_void {
-                    let hash = murmur64(ptr as u64) % (1 << 23);
-                    if (SKIP_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
-                        return true;
-                    }
-                    if (CHECKED_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
-                        return false;
-                    }
-
-                    return if skip_ptr(ptr) {
-                        SKIP_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
-                        true
-                    } else {
-                        CHECKED_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
-
-                        if SAVE_STACK_TRACES_TO_FILE {
-                            Self::save_trace_to_file(tid, ptr);
-                        }
-                        false
-                    };
-                }
-
-                true
-            })
-        } else {
+        if should_skip_trace {
             stack[0] = SKIPPED_TRACE;
+            return;
         }
+        stack[0] = MISSING_TRACE;
+        backtrace::trace(|frame| {
+            let ptr = frame.ip();
+            stack[0] = ptr as *mut c_void;
+            if ptr >= SKIP_ADDR as *mut c_void {
+                true
+            } else {
+                let hash = murmur64(ptr as u64) % (1 << (CACHE_BITS + 3));
+                if (SKIP_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
+                    true
+                } else if (CHECKED_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
+                    false
+                } else if skip_ptr(ptr) {
+                    SKIP_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
+                    true
+                } else {
+                    CHECKED_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
+
+                    if SAVE_STACK_TRACES_TO_FILE {
+                        Self::save_trace_to_file(tid, ptr);
+                    }
+                    false
+                }
+            }
+        })
     }
 
     unsafe fn save_trace_to_file(tid: usize, ptr: *mut c_void) {
@@ -318,15 +319,15 @@ impl<A: GlobalAlloc> MyAllocator<A> {
                 if let Some(path) = symbol.filename() {
                     writeln!(
                         f,
-                        "PATH {:?} {} {}",
+                        "PATH {:?} {} {:?}",
                         ptr,
                         symbol.lineno().unwrap_or_default(),
-                        path.to_str().unwrap_or("<UNKNOWN>")
+                        path.as_os_str()
                     )
                     .unwrap();
                 }
                 if let Some(name) = symbol.name() {
-                    writeln!(f, "SYMBOL {:?} {}", ptr, name.to_string()).unwrap();
+                    writeln!(f, "SYMBOL {:?} {:?}", ptr, name.as_str()).unwrap();
                 }
             }
         });
