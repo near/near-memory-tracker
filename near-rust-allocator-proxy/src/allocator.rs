@@ -26,7 +26,6 @@ const ENABLE_STACK_TRACE: bool = true;
 const ENABLE_STACK_TRACE: bool = false;
 
 const COUNTERS_SIZE: usize = 16384;
-static TOTAL_MEMORY_USAGE: AtomicUsize = AtomicUsize::new(0);
 static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE] = unsafe {
     // SAFETY: Rust [guarantees](https://doc.rust-lang.org/stable/std/sync/atomic/struct.AtomicUsize.html)
     // that `usize` and `AtomicUsize` have the same representation.
@@ -159,7 +158,7 @@ fn skip_ptr(addr: *mut c_void) -> bool {
 }
 
 pub fn total_memory_usage() -> usize {
-    TOTAL_MEMORY_USAGE.load(Ordering::SeqCst)
+    MEM_SIZE.iter().map(|v| v.load(Ordering::Relaxed)).sum()
 }
 
 pub fn current_thread_memory_usage() -> usize {
@@ -206,7 +205,6 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
         let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].fetch_add(layout.size(), Ordering::SeqCst)
             + layout.size();
 
-        TOTAL_MEMORY_USAGE.fetch_add(layout.size(), Ordering::SeqCst);
         MEM_CNT[tid % COUNTERS_SIZE].fetch_add(1, Ordering::SeqCst);
 
         if memory_usage > MEMORY_USAGE_MAX.with(|x| x.get()) {
@@ -242,7 +240,6 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
         let tid: usize = (*(ptr as *mut AllocHeader)).tid as usize;
 
         MEM_SIZE[tid % COUNTERS_SIZE].fetch_sub(layout.size(), Ordering::SeqCst);
-        TOTAL_MEMORY_USAGE.fetch_sub(layout.size(), Ordering::SeqCst);
         MEM_CNT[tid % COUNTERS_SIZE].fetch_sub(1, Ordering::SeqCst);
 
         self.inner.dealloc(ptr, new_layout);
@@ -272,10 +269,10 @@ impl<A: GlobalAlloc> MyAllocator<A> {
 impl<A: GlobalAlloc> MyAllocator<A> {
     unsafe fn compute_stack_trace(layout: Layout, tid: usize, stack: &mut [*mut c_void; 1]) {
         if IN_TRACE.with(|in_trace| in_trace.get()) == 0 {
+            IN_TRACE.with(|in_trace| in_trace.set(1));
             let mut ary: [*mut c_void; MAX_STACK + 1] = [null_mut::<c_void>(); MAX_STACK + 1];
             let mut addr: Option<*mut c_void> = Some(MISSING_TRACE);
             let mut chosen_i = 0;
-            IN_TRACE.with(|in_trace| in_trace.set(1));
             if layout.size() >= MIN_BLOCK_SIZE
                 || rand::thread_rng().gen_range(0, 100) < SMALL_BLOCK_TRACE_PROBABILITY
             {
@@ -384,7 +381,7 @@ pub fn print_counters_ary() {
 
 #[cfg(test)]
 mod test {
-    use crate::allocator::{print_counters_ary, MyAllocator};
+    use crate::allocator::{print_counters_ary, total_memory_usage, MyAllocator};
     use std::alloc::{GlobalAlloc, Layout};
     use std::ptr::null_mut;
     use tracing_subscriber::util::SubscriberInitExt;
@@ -403,6 +400,8 @@ mod test {
         let layout = Layout::from_size_align(32, 1).unwrap();
         let ptr = unsafe { ALLOC.alloc(layout) };
         assert_ne!(ptr, null_mut());
+
+        assert_eq!(total_memory_usage(), 32);
 
         unsafe { ALLOC.dealloc(ptr, layout) };
     }
