@@ -335,7 +335,7 @@ impl<A: GlobalAlloc> MyAllocator<A> {
 }
 
 pub fn print_counters_ary() {
-    tracing::info!(message = "tid", tid = get_tid());
+    tracing::info!(tid = get_tid(), "tid");
     let mut total_cnt: usize = 0;
     let mut total_size: usize = 0;
     for idx in 0..COUNTERS_SIZE {
@@ -343,11 +343,12 @@ pub fn print_counters_ary() {
         if val != 0 {
             let cnt = MEM_CNT[idx].load(Ordering::SeqCst);
             total_cnt += cnt;
-            tracing::info!(message = "COUNTERS", idx, cnt, val);
             total_size += val;
+
+            tracing::info!(idx, cnt, val, "COUNTERS");
         }
     }
-    tracing::info!(message = "COUNTERS TOTAL", total_cnt, total_size);
+    tracing::info!(total_cnt, total_size, "COUNTERS TOTAL");
 }
 
 #[cfg(test)]
