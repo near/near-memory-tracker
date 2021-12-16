@@ -66,32 +66,24 @@ thread_local! {
     static IN_TRACE: Cell<usize> = Cell::new(0);
 }
 
-#[cfg(target_os = "linux")]
 pub fn get_tid() -> usize {
-    // FUTURE: remove nix
-    // thread::current().id().as_u64() is still unstable
     TID.with(|f| {
         let mut v = f.get();
         if v == 0 {
-            v = nix::unistd::gettid().as_raw() as usize;
+            // thread::current().id().as_u64() is still unstable
+            #[cfg(target_os = "linux")]
+            {
+                v = nix::unistd::gettid().as_raw() as usize;
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                static NTHREADS: AtomicUsize = AtomicUsize::new(0);
+                v = NTHREADS.fetch_add(1, Ordering::SeqCst) as usize;
+            }
             f.set(v)
         }
         v
     })
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn get_tid() -> usize {
-    static NTHREADS: AtomicUsize = AtomicUsize::new(0);
-    let res = TID.with(|t| {
-        let mut v = t.get();
-        if v == 0 {
-            v = NTHREADS.fetch_add(1, Ordering::SeqCst) as usize;
-            t.set(v);
-        }
-        v
-    });
-    res
 }
 
 fn murmur64(mut h: u64) -> u64 {
@@ -286,24 +278,24 @@ impl<A: GlobalAlloc> MyAllocator<A> {
         }
         stack[0] = MISSING_TRACE;
         backtrace::trace(|frame| {
-            let ptr = frame.ip();
-            stack[0] = ptr as *mut c_void;
-            if ptr >= SKIP_ADDR as *mut c_void {
+            let addr = frame.ip();
+            stack[0] = addr as *mut c_void;
+            if addr >= SKIP_ADDR as *mut c_void {
                 true
             } else {
-                let hash = murmur64(ptr as u64) % (8 * CACHE_SIZE as u64);
+                let hash = murmur64(addr as u64) % (8 * CACHE_SIZE as u64);
                 if (SKIP_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
                     true
                 } else if (CHECKED_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
                     false
-                } else if skip_ptr(ptr) {
+                } else if skip_ptr(addr) {
                     SKIP_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
                     true
                 } else {
                     CHECKED_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
 
                     if SAVE_STACK_TRACES_TO_FILE.load(Ordering::SeqCst) {
-                        Self::save_trace_to_file(tid, ptr);
+                        Self::save_trace_to_file(tid, addr);
                     }
                     false
                 }
