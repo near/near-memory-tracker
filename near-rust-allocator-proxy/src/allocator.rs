@@ -292,9 +292,6 @@ impl<A: GlobalAlloc> MyAllocator<A> {
                     if (CHECKED_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
                         break;
                     }
-                    if SAVE_STACK_TRACES_TO_FILE {
-                        Self::save_trace_to_file(tid, ptr);
-                    }
 
                     if skip_ptr(ptr) {
                         SKIP_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
@@ -302,28 +299,8 @@ impl<A: GlobalAlloc> MyAllocator<A> {
                         CHECKED_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
 
                         if SAVE_STACK_TRACES_TO_FILE {
-                            let fname = format!("/tmp/logs/{}", tid);
-
-                            if let Ok(mut f) =
-                                OpenOptions::new().create(true).write(true).append(true).open(fname)
-                            {
-                                writeln!(f, "STACK_FOR {:?}", addr).unwrap();
-                                let ary2: [*mut c_void; 256] = [null_mut::<c_void>(); 256];
-                                let size2 = libc::backtrace(ary2.as_ptr() as *mut *mut c_void, 256)
-                                    as usize;
-                                for i in 0..size2 {
-                                    let addr2 = ary2[i];
-
-                                    backtrace::resolve(addr2, |symbol| {
-                                        if let Some(name) = symbol.name() {
-                                            let name = name.as_str().unwrap_or("");
-
-                                            writeln!(f, "STACK {:?} {:?} {:?}", i, addr2, name)
-                                                .unwrap();
-                                        }
-                                    });
-                                }
-                            }
+                            Self::save_trace_to_file(tid, ptr);
+                            Self::save_full_stack_trace_for_first_example(tid, &mut addr)
                         }
                         break;
                     }
@@ -336,6 +313,27 @@ impl<A: GlobalAlloc> MyAllocator<A> {
         for i in 1..stack.len() {
             stack[i] =
                 ary[min(MAX_STACK as isize, max(0, chosen_i as isize + i as isize)) as usize];
+        }
+    }
+
+    unsafe fn save_full_stack_trace_for_first_example(tid: usize, addr: &mut Option<*mut c_void>) {
+        let fname = format!("/tmp/logs/{}", tid);
+
+        if let Ok(mut f) = OpenOptions::new().create(true).write(true).append(true).open(fname) {
+            writeln!(f, "STACK_FOR {:?}", addr).unwrap();
+            let ary2: [*mut c_void; 256] = [null_mut::<c_void>(); 256];
+            let size2 = libc::backtrace(ary2.as_ptr() as *mut *mut c_void, 256) as usize;
+            for i in 0..size2 {
+                let addr2 = ary2[i];
+
+                backtrace::resolve(addr2, |symbol| {
+                    if let Some(name) = symbol.name() {
+                        let name = name.as_str().unwrap_or("");
+
+                        writeln!(f, "STACK {:?} {:?} {:?}", i, addr2, name).unwrap();
+                    }
+                });
+            }
         }
     }
 
