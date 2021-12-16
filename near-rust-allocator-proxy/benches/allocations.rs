@@ -1,8 +1,8 @@
-use near_rust_allocator_proxy::MyAllocator;
+use near_rust_allocator_proxy::ProxyAllocator;
 
 #[global_allocator]
-static ALLOC: MyAllocator<tikv_jemallocator::Jemalloc> =
-    MyAllocator::new(tikv_jemallocator::Jemalloc);
+static ALLOC: ProxyAllocator<tikv_jemallocator::Jemalloc> =
+    ProxyAllocator::new(tikv_jemallocator::Jemalloc);
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
