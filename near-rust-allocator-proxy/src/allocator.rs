@@ -78,7 +78,7 @@ pub fn get_tid() -> usize {
             #[cfg(not(target_os = "linux"))]
             {
                 static NTHREADS: AtomicUsize = AtomicUsize::new(0);
-                v = NTHREADS.fetch_add(1, Ordering::SeqCst) as usize;
+                v = NTHREADS.fetch_add(1, Ordering::Relaxed) as usize;
             }
             f.set(v)
         }
@@ -145,21 +145,21 @@ fn skip_ptr(addr: *mut c_void) -> bool {
 }
 
 pub fn total_memory_usage() -> usize {
-    MEM_SIZE.iter().map(|v| v.load(Ordering::SeqCst)).sum()
+    MEM_SIZE.iter().map(|v| v.load(Ordering::Relaxed)).sum()
 }
 
 pub fn current_thread_memory_usage() -> usize {
     let tid = get_tid();
 
-    MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::SeqCst)
+    MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::Relaxed)
 }
 
 pub fn thread_memory_usage(tid: usize) -> usize {
-    MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::SeqCst)
+    MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::Relaxed)
 }
 
 pub fn thread_memory_count(tid: usize) -> usize {
-    MEM_CNT[tid % COUNTERS_SIZE].load(Ordering::SeqCst)
+    MEM_CNT[tid % COUNTERS_SIZE].load(Ordering::Relaxed)
 }
 
 pub fn current_thread_peak_memory_usage() -> usize {
@@ -168,7 +168,7 @@ pub fn current_thread_peak_memory_usage() -> usize {
 
 pub fn reset_memory_usage_max() {
     let tid = get_tid();
-    let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::SeqCst);
+    let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::Relaxed);
     MEMORY_USAGE_MAX.with(|x| x.set(memory_usage));
 }
 
@@ -189,10 +189,11 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
             Layout::from_size_align(layout.size() + ALLOC_HEADER_SIZE, layout.align()).unwrap();
 
         let res = self.inner.alloc(new_layout);
-        let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].fetch_add(layout.size(), Ordering::SeqCst)
+        let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE]
+            .fetch_add(layout.size(), Ordering::Relaxed)
             + layout.size();
 
-        MEM_CNT[tid % COUNTERS_SIZE].fetch_add(1, Ordering::SeqCst);
+        MEM_CNT[tid % COUNTERS_SIZE].fetch_add(1, Ordering::Relaxed);
 
         MEMORY_USAGE_MAX.with(|val| {
             if val.get() < memory_usage {
@@ -212,7 +213,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
                 return;
             }
             Self::print_stack_trace_on_memory_spike(layout, tid, memory_usage);
-            if ENABLE_STACK_TRACE.load(Ordering::SeqCst) {
+            if ENABLE_STACK_TRACE.load(Ordering::Relaxed) {
                 Self::compute_stack_trace(layout, tid, &mut header.stack);
             }
             in_trace.set(0);
@@ -231,8 +232,8 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
         (*(ptr as *mut AllocHeader)).magic = (MAGIC_RUST + STACK_SIZE + FREED_MAGIC) as u64;
         let tid: usize = (*(ptr as *mut AllocHeader)).tid as usize;
 
-        MEM_SIZE[tid % COUNTERS_SIZE].fetch_sub(layout.size(), Ordering::SeqCst);
-        MEM_CNT[tid % COUNTERS_SIZE].fetch_sub(1, Ordering::SeqCst);
+        MEM_SIZE[tid % COUNTERS_SIZE].fetch_sub(layout.size(), Ordering::Relaxed);
+        MEM_CNT[tid % COUNTERS_SIZE].fetch_sub(1, Ordering::Relaxed);
 
         self.inner.dealloc(ptr, new_layout);
     }
@@ -294,7 +295,7 @@ impl<A: GlobalAlloc> MyAllocator<A> {
                 } else {
                     CHECKED_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
 
-                    if SAVE_STACK_TRACES_TO_FILE.load(Ordering::SeqCst) {
+                    if SAVE_STACK_TRACES_TO_FILE.load(Ordering::Relaxed) {
                         Self::save_trace_to_file(tid, addr);
                     }
                     false
@@ -332,9 +333,9 @@ pub fn print_counters_ary() {
     let mut total_cnt: usize = 0;
     let mut total_size: usize = 0;
     for idx in 0..COUNTERS_SIZE {
-        let val = MEM_SIZE[idx].load(Ordering::SeqCst);
+        let val = MEM_SIZE[idx].load(Ordering::Relaxed);
         if val != 0 {
-            let cnt = MEM_CNT[idx].load(Ordering::SeqCst);
+            let cnt = MEM_CNT[idx].load(Ordering::Relaxed);
             total_cnt += cnt;
             total_size += val;
 
