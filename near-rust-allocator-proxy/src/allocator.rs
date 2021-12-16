@@ -6,7 +6,7 @@ use std::io::Write;
 use std::mem;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const MEBIBYTE: usize = 1024 * 1024;
 const MIN_BLOCK_SIZE: usize = 1000;
@@ -14,16 +14,14 @@ const SMALL_BLOCK_TRACE_PROBABILITY: u64 = 10;
 const REPORT_USAGE_INTERVAL: usize = 512 * MEBIBYTE;
 const SKIP_ADDR: *mut c_void = 0x700000000000 as *mut c_void;
 /// Should be a configurable option.
-const PRINT_STACK_TRACE_ON_MEMORY_SPIKE: bool = true;
-/// Should be a configurable option.
-const SAVE_STACK_TRACES_TO_FILE: bool = false;
+const SAVE_STACK_TRACES_TO_FILE: AtomicBool = AtomicBool::new(false);
 /// Should be a configurable option.
 #[cfg(target_os = "linux")]
-const ENABLE_STACK_TRACE: bool = true;
+const ENABLE_STACK_TRACE: AtomicBool = AtomicBool::new(true);
 
 // Currently there is no point in getting stack traces on non-linux platform, because other tools don't support linux.
 #[cfg(not(target_os = "linux"))]
-const ENABLE_STACK_TRACE: bool = false;
+const ENABLE_STACK_TRACE: AtomicBool = AtomicBool::new(false);
 
 const COUNTERS_SIZE: usize = 16384;
 static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE] = unsafe {
@@ -39,9 +37,9 @@ static MEM_CNT: [AtomicUsize; COUNTERS_SIZE] = unsafe {
     )
 };
 
-const CACHE_BITS: usize = 20;
-static mut SKIP_PTR: [u8; 1 << CACHE_BITS] = [0; 1 << CACHE_BITS];
-static mut CHECKED_PTR: [u8; 1 << CACHE_BITS] = [0; 1 << CACHE_BITS];
+const CACHE_SIZE: usize = 1 << 20;
+static mut SKIP_PTR: [u8; CACHE_SIZE] = [0; CACHE_SIZE];
+static mut CHECKED_PTR: [u8; CACHE_SIZE] = [0; CACHE_SIZE];
 
 const STACK_SIZE: usize = 1;
 
@@ -70,6 +68,8 @@ thread_local! {
 
 #[cfg(target_os = "linux")]
 pub fn get_tid() -> usize {
+    // FUTURE: remove nix
+    // thread::current().id().as_u64() is still unstable
     TID.with(|f| {
         let mut v = f.get();
         if v == 0 {
@@ -81,11 +81,10 @@ pub fn get_tid() -> usize {
 }
 
 #[cfg(not(target_os = "linux"))]
-static NTHREADS: AtomicUsize = AtomicUsize::new(0);
-#[cfg(not(target_os = "linux"))]
 pub fn get_tid() -> usize {
+    static NTHREADS: AtomicUsize = AtomicUsize::new(0);
     let res = TID.with(|t| {
-        let v = t.get();
+        let mut v = t.get();
         if v == 0 {
             v = NTHREADS.fetch_add(1, Ordering::SeqCst) as usize;
             t.set(v);
@@ -95,7 +94,7 @@ pub fn get_tid() -> usize {
     res
 }
 
-pub fn murmur64(mut h: u64) -> u64 {
+fn murmur64(mut h: u64) -> u64 {
     h ^= h >> 33;
     h = h.overflowing_mul(0xff51afd7ed558ccd).0;
     h ^= h >> 33;
@@ -154,7 +153,7 @@ fn skip_ptr(addr: *mut c_void) -> bool {
 }
 
 pub fn total_memory_usage() -> usize {
-    MEM_SIZE.iter().map(|v| v.load(Ordering::Relaxed)).sum()
+    MEM_SIZE.iter().map(|v| v.load(Ordering::SeqCst)).sum()
 }
 
 pub fn current_thread_memory_usage() -> usize {
@@ -220,10 +219,8 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
             if in_trace.replace(1) != 0 {
                 return;
             }
-            if PRINT_STACK_TRACE_ON_MEMORY_SPIKE {
-                Self::print_stack_trace_on_memory_spike(layout, tid, memory_usage)
-            }
-            if ENABLE_STACK_TRACE {
+            Self::print_stack_trace_on_memory_spike(layout, tid, memory_usage);
+            if ENABLE_STACK_TRACE.load(Ordering::SeqCst) {
                 Self::compute_stack_trace(layout, tid, &mut header.stack);
             }
             in_trace.set(0);
@@ -294,7 +291,7 @@ impl<A: GlobalAlloc> MyAllocator<A> {
             if ptr >= SKIP_ADDR as *mut c_void {
                 true
             } else {
-                let hash = murmur64(ptr as u64) % (1 << (CACHE_BITS + 3));
+                let hash = murmur64(ptr as u64) % (8 * CACHE_SIZE as u64);
                 if (SKIP_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
                     true
                 } else if (CHECKED_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
@@ -305,7 +302,7 @@ impl<A: GlobalAlloc> MyAllocator<A> {
                 } else {
                     CHECKED_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
 
-                    if SAVE_STACK_TRACES_TO_FILE {
+                    if SAVE_STACK_TRACES_TO_FILE.load(Ordering::SeqCst) {
                         Self::save_trace_to_file(tid, ptr);
                     }
                     false
