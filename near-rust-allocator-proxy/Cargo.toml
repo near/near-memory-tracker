@@ -12,7 +12,6 @@ edition = "2021"
 
 [dependencies]
 backtrace = "0.3"
-libc = "0.2.65"
 nix = "0.15.0"
 tracing = "0.1.13"
 

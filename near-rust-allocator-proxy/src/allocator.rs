@@ -1,8 +1,6 @@
 use backtrace::Backtrace;
-use libc;
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::Cell;
-use std::cmp::{max, min};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::mem;
@@ -12,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 const MEBIBYTE: usize = 1024 * 1024;
 const MIN_BLOCK_SIZE: usize = 1000;
-const SMALL_BLOCK_TRACE_PROBABILITY: usize = 1;
+const SMALL_BLOCK_TRACE_PROBABILITY: usize = 10;
 const REPORT_USAGE_INTERVAL: usize = 512 * MEBIBYTE;
 const SKIP_ADDR: u64 = 0x700000000000;
 const PRINT_STACK_TRACE_ON_MEMORY_SPIKE: bool = true;
@@ -38,7 +36,6 @@ static mut SKIP_PTR: [u8; 1 << 20] = [0; 1 << 20];
 static mut CHECKED_PTR: [u8; 1 << 20] = [0; 1 << 20];
 
 const STACK_SIZE: usize = 1;
-const MAX_STACK: usize = 15;
 const SAVE_STACK_TRACES_TO_FILE: bool = false;
 
 const SKIPPED_TRACE: *mut c_void = 1 as *mut c_void;
@@ -129,6 +126,7 @@ const IGNORE_INSIDE: &[&str] = &[
     "$LT$tokio..",
     "$LT$tokio_util..",
     "$LT$tracing_subscriber..",
+    "allocator",
 ];
 
 fn skip_ptr(addr: *mut c_void) -> bool {
@@ -266,76 +264,46 @@ impl<A: GlobalAlloc> MyAllocator<A> {
 }
 
 impl<A: GlobalAlloc> MyAllocator<A> {
+    #[inline]
     unsafe fn compute_stack_trace(layout: Layout, tid: usize, stack: &mut [*mut c_void; 1]) {
-        let ary: [*mut c_void; MAX_STACK] = [null_mut::<c_void>(); MAX_STACK];
-        let mut addr: Option<*mut c_void> = Some(MISSING_TRACE);
-        let mut chosen_i = 0;
         if layout.size() >= MIN_BLOCK_SIZE
             || NUM_ALLOCATIONS.with(|key| {
                 let val = key.get();
                 key.set(val + 1);
                 val
-            }) % 100
+            }) % 1024
                 < SMALL_BLOCK_TRACE_PROBABILITY
         {
-            // Calls to `libc::backtrace` are the bottleneck
-            let size = libc::backtrace(ary.as_ptr() as *mut *mut c_void, MAX_STACK as i32);
-            for i in 1..min(size as usize, MAX_STACK) {
-                let ptr = ary[i];
-                addr = Some(ptr as *mut c_void);
-                chosen_i = i;
+            stack[0] = MISSING_TRACE;
+            backtrace::trace(|frame| {
+                let ptr = frame.ip();
+                stack[0] = ptr as *mut c_void;
                 if ptr < SKIP_ADDR as *mut c_void {
                     let hash = murmur64(ptr as u64) % (1 << 23);
                     if (SKIP_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
-                        continue;
+                        return true;
                     }
                     if (CHECKED_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
-                        break;
-                    }
-                    if SAVE_STACK_TRACES_TO_FILE {
-                        Self::save_trace_to_file(tid, ptr);
+                        return false;
                     }
 
                     if skip_ptr(ptr) {
                         SKIP_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
+                        return true;
                     } else {
                         CHECKED_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
 
                         if SAVE_STACK_TRACES_TO_FILE {
-                            let fname = format!("/tmp/logs/{}", tid);
-
-                            if let Ok(mut f) =
-                                OpenOptions::new().create(true).write(true).append(true).open(fname)
-                            {
-                                writeln!(f, "STACK_FOR {:?}", addr).unwrap();
-                                let ary2: [*mut c_void; 256] = [null_mut::<c_void>(); 256];
-                                let size2 = libc::backtrace(ary2.as_ptr() as *mut *mut c_void, 256)
-                                    as usize;
-                                for i in 0..size2 {
-                                    let addr2 = ary2[i];
-
-                                    backtrace::resolve(addr2, |symbol| {
-                                        if let Some(name) = symbol.name() {
-                                            let name = name.as_str().unwrap_or("");
-
-                                            writeln!(f, "STACK {:?} {:?} {:?}", i, addr2, name)
-                                                .unwrap();
-                                        }
-                                    });
-                                }
-                            }
+                            Self::save_trace_to_file(tid, ptr);
                         }
-                        break;
+                        return false;
                     }
                 }
-            }
+
+                true
+            })
         } else {
-            addr = Some(SKIPPED_TRACE);
-        }
-        stack[0] = addr.unwrap_or(null_mut::<c_void>());
-        for i in 1..stack.len() {
-            stack[i] =
-                ary[min(MAX_STACK as isize, max(0, chosen_i as isize + i as isize)) as usize];
+            stack[0] = SKIPPED_TRACE;
         }
     }
 
