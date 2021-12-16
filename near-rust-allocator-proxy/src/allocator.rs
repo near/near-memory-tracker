@@ -1,6 +1,5 @@
 use backtrace::Backtrace;
 use libc;
-use rand::Rng;
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::Cell;
 use std::cmp::{max, min};
@@ -62,6 +61,7 @@ thread_local! {
     pub static IN_TRACE: Cell<usize> = Cell::new(0);
     pub static MEMORY_USAGE_MAX: Cell<usize> = Cell::new(0);
     pub static MEMORY_USAGE_LAST_REPORT: Cell<usize> = Cell::new(0);
+    pub static NUM_ALLOCATIONS: Cell<usize> = Cell::new(0);
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -274,7 +274,12 @@ impl<A: GlobalAlloc> MyAllocator<A> {
             let mut addr: Option<*mut c_void> = Some(MISSING_TRACE);
             let mut chosen_i = 0;
             if layout.size() >= MIN_BLOCK_SIZE
-                || rand::thread_rng().gen_range(0, 100) < SMALL_BLOCK_TRACE_PROBABILITY
+                || NUM_ALLOCATIONS.with(|key| {
+                    let val = key.get();
+                    key.set(val + 1);
+                    val
+                }) % 100
+                    < SMALL_BLOCK_TRACE_PROBABILITY
             {
                 let size = libc::backtrace(ary.as_ptr() as *mut *mut c_void, MAX_STACK as i32);
                 ary[0] = null_mut::<c_void>();
