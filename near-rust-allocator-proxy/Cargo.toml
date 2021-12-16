@@ -14,7 +14,6 @@ edition = "2021"
 backtrace = "0.3"
 libc = "0.2.65"
 nix = "0.15.0"
-rand = "0.7.3"
 tracing = "0.1.13"
 
 [dev-dependencies]
