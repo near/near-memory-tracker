@@ -38,8 +38,8 @@ static MEM_CNT: [AtomicUsize; COUNTERS_SIZE] = unsafe {
 };
 
 const CACHE_SIZE: usize = 1 << 20;
-static mut SKIP_PTR: [u8; CACHE_SIZE] = [0; CACHE_SIZE];
-static mut CHECKED_PTR: [u8; CACHE_SIZE] = [0; CACHE_SIZE];
+static mut SKIP_CACHE: [u8; CACHE_SIZE] = [0; CACHE_SIZE];
+static mut CHECKED_CACHE: [u8; CACHE_SIZE] = [0; CACHE_SIZE];
 
 const STACK_SIZE: usize = 1;
 
@@ -230,10 +230,10 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
         ptr = ptr.offset(-(ALLOC_HEADER_SIZE as isize));
 
         (*(ptr as *mut AllocHeader)).magic = (MAGIC_RUST + STACK_SIZE + FREED_MAGIC) as u64;
-        let tid: usize = (*(ptr as *mut AllocHeader)).tid as usize;
+        let header_tid: usize = (*(ptr as *mut AllocHeader)).tid as usize;
 
-        MEM_SIZE[tid % COUNTERS_SIZE].fetch_sub(layout.size(), Ordering::Relaxed);
-        MEM_CNT[tid % COUNTERS_SIZE].fetch_sub(1, Ordering::Relaxed);
+        MEM_SIZE[header_tid % COUNTERS_SIZE].fetch_sub(layout.size(), Ordering::Relaxed);
+        MEM_CNT[header_tid % COUNTERS_SIZE].fetch_sub(1, Ordering::Relaxed);
 
         self.inner.dealloc(ptr, new_layout);
     }
@@ -285,15 +285,17 @@ impl<A: GlobalAlloc> MyAllocator<A> {
                 true
             } else {
                 let hash = murmur64(addr as u64) % (8 * CACHE_SIZE as u64);
-                if (SKIP_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
+                let i = (hash / 8) as usize;
+                let cur_bit = 1 << (hash % 8);
+                if SKIP_CACHE[i] & cur_bit != 0 {
                     true
-                } else if (CHECKED_PTR[(hash / 8) as usize] >> (hash % 8)) & 1 == 1 {
+                } else if CHECKED_CACHE[i] & cur_bit != 0 {
                     false
                 } else if skip_ptr(addr) {
-                    SKIP_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
+                    SKIP_CACHE[i] |= cur_bit;
                     true
                 } else {
-                    CHECKED_PTR[(hash / 8) as usize] |= 1 << (hash % 8);
+                    CHECKED_CACHE[i] |= cur_bit;
 
                     if SAVE_STACK_TRACES_TO_FILE.load(Ordering::Relaxed) {
                         Self::save_trace_to_file(tid, addr);
@@ -304,24 +306,24 @@ impl<A: GlobalAlloc> MyAllocator<A> {
         })
     }
 
-    unsafe fn save_trace_to_file(tid: usize, ptr: *mut c_void) {
-        backtrace::resolve(ptr, |symbol| {
+    unsafe fn save_trace_to_file(tid: usize, addr: *mut c_void) {
+        backtrace::resolve(addr, |symbol| {
             let file_name = format!("/tmp/logs/{}", tid);
-            if let Ok(mut f) =
+            if let Ok(mut file) =
                 OpenOptions::new().create(true).write(true).append(true).open(file_name)
             {
                 if let Some(path) = symbol.filename() {
                     writeln!(
-                        f,
+                        file,
                         "PATH {:?} {} {:?}",
-                        ptr,
+                        addr,
                         symbol.lineno().unwrap_or_default(),
                         path.as_os_str()
                     )
                     .unwrap();
                 }
                 if let Some(name) = symbol.name() {
-                    writeln!(f, "SYMBOL {:?} {:?}", ptr, name.as_str()).unwrap();
+                    writeln!(file, "SYMBOL {:?} {:?}", addr, name.as_str()).unwrap();
                 }
             }
         });
