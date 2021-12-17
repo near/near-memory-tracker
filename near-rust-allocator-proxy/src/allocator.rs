@@ -12,10 +12,11 @@ const MEBIBYTE: usize = 1024 * 1024;
 const REPORT_USAGE_INTERVAL: usize = 512 * MEBIBYTE;
 const SKIP_ADDR: *mut c_void = 0x700000000000 as *mut c_void;
 /// Should be a configurable option.
-const SAVE_STACK_TRACES_TO_FILE: AtomicBool = AtomicBool::new(false);
+static SAVE_STACK_TRACES_TO_FILE: AtomicBool = AtomicBool::new(false);
 /// Should be a configurable option.
 #[cfg(target_os = "linux")]
-const ENABLE_STACK_TRACE: AtomicBool = AtomicBool::new(true);
+static ENABLE_STACK_TRACE: AtomicBool = AtomicBool::new(true);
+const LOGS_PATH: &str = "/tmp/logs";
 
 // Currently there is no point in getting stack traces on non-linux platform, because other tools don't support linux.
 #[cfg(not(target_os = "linux"))]
@@ -310,15 +311,15 @@ impl<A: GlobalAlloc> MyAllocator<A> {
 
     unsafe fn save_trace_to_file(tid: usize, addr: *mut c_void) {
         backtrace::resolve(addr, |symbol| {
-            let _ = fs::create_dir_all("/tmp/logs");
-            let file_name = format!("/tmp/logs/{}", tid);
+            let _ = fs::create_dir_all(LOGS_PATH);
+            let file_name = format!("{}/{}", LOGS_PATH, tid);
             if let Ok(mut file) =
                 OpenOptions::new().create(true).write(true).append(true).open(file_name)
             {
                 if let Some(path) = symbol.filename() {
                     writeln!(
                         file,
-                        "PATH {:?} {} {:?}",
+                        "PATH addr={:?} symbol={} path={:?}",
                         addr,
                         symbol.lineno().unwrap_or_default(),
                         path.as_os_str()
@@ -326,7 +327,7 @@ impl<A: GlobalAlloc> MyAllocator<A> {
                     .unwrap();
                 }
                 if let Some(name) = symbol.name() {
-                    writeln!(file, "SYMBOL {:?} {:?}", addr, name.as_str()).unwrap();
+                    writeln!(file, "SYMBOL addr={:?} name={:?}", addr, name.as_str()).unwrap();
                 }
             }
         });
