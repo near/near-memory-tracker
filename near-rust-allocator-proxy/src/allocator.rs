@@ -9,7 +9,6 @@ use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const MEBIBYTE: usize = 1024 * 1024;
-const SMALL_BLOCK_TRACE_PROBABILITY: u64 = 10;
 const REPORT_USAGE_INTERVAL: usize = 512 * MEBIBYTE;
 const SKIP_ADDR: *mut c_void = 0x700000000000 as *mut c_void;
 /// Should be a configurable option.
@@ -41,9 +40,6 @@ static mut SKIP_CACHE: [u8; CACHE_SIZE] = [0; CACHE_SIZE];
 static mut CHECKED_CACHE: [u8; CACHE_SIZE] = [0; CACHE_SIZE];
 
 const STACK_SIZE: usize = 1;
-
-const SKIPPED_TRACE: *mut c_void = 1 as *mut c_void;
-const MISSING_TRACE: *mut c_void = 2 as *mut c_void;
 
 #[repr(C)]
 struct AllocHeader {
@@ -262,37 +258,36 @@ impl<A: GlobalAlloc> MyAllocator<A> {
         tid: usize,
         stack: &mut [*mut c_void; STACK_SIZE],
     ) {
-        if !Self::should_compute_trace(layout) {
-            stack[0] = SKIPPED_TRACE;
-            return;
-        }
-        stack[0] = MISSING_TRACE;
-        backtrace::trace(|frame| {
-            let addr = frame.ip();
-            stack[0] = addr as *mut c_void;
-            if addr >= SKIP_ADDR as *mut c_void {
-                true
-            } else {
-                let hash = murmur64(addr as u64) % (8 * CACHE_SIZE as u64);
-                let i = (hash / 8) as usize;
-                let cur_bit = 1 << (hash % 8);
-                if SKIP_CACHE[i] & cur_bit != 0 {
-                    true
-                } else if CHECKED_CACHE[i] & cur_bit != 0 {
-                    false
-                } else if skip_ptr(addr) {
-                    SKIP_CACHE[i] |= cur_bit;
+        if Self::should_compute_trace(layout) {
+            const MISSING_TRACE: *mut c_void = 2 as *mut c_void;
+            stack[0] = MISSING_TRACE;
+            backtrace::trace(|frame| {
+                let addr = frame.ip();
+                stack[0] = addr as *mut c_void;
+                if addr >= SKIP_ADDR as *mut c_void {
                     true
                 } else {
-                    CHECKED_CACHE[i] |= cur_bit;
+                    let hash = murmur64(addr as u64) % (8 * CACHE_SIZE as u64);
+                    let i = (hash / 8) as usize;
+                    let cur_bit = 1 << (hash % 8);
+                    if SKIP_CACHE[i] & cur_bit != 0 {
+                        true
+                    } else if CHECKED_CACHE[i] & cur_bit != 0 {
+                        false
+                    } else if skip_ptr(addr) {
+                        SKIP_CACHE[i] |= cur_bit;
+                        true
+                    } else {
+                        CHECKED_CACHE[i] |= cur_bit;
 
-                    if SAVE_STACK_TRACES_TO_FILE.load(Ordering::Relaxed) {
-                        Self::save_trace_to_file(tid, addr);
+                        if SAVE_STACK_TRACES_TO_FILE.load(Ordering::Relaxed) {
+                            Self::save_trace_to_file(tid, addr);
+                        }
+                        false
                     }
-                    false
                 }
-            }
-        })
+            })
+        }
     }
 
     unsafe fn should_compute_trace(layout: Layout) -> bool {
