@@ -262,7 +262,7 @@ impl<A: GlobalAlloc> MyAllocator<A> {
         tid: usize,
         stack: &mut [*mut c_void; STACK_SIZE],
     ) {
-        if !Self::should_skip_trace(layout) {
+        if !Self::should_compute_trace(layout) {
             stack[0] = SKIPPED_TRACE;
             return;
         }
@@ -295,7 +295,7 @@ impl<A: GlobalAlloc> MyAllocator<A> {
         })
     }
 
-    unsafe fn should_skip_trace(layout: Layout) -> bool {
+    unsafe fn should_compute_trace(layout: Layout) -> bool {
         match layout.size() {
             // 1% of the time
             0..=999 => {
@@ -306,10 +306,10 @@ impl<A: GlobalAlloc> MyAllocator<A> {
                     val
                 }) as u64)
                     % 1024)
-                    >= SMALL_BLOCK_TRACE_PROBABILITY
+                    < 10
             }
             // 100%
-            _ => false,
+            _ => true,
         }
     }
 
