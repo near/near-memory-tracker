@@ -9,7 +9,6 @@ use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const MEBIBYTE: usize = 1024 * 1024;
-const MIN_BLOCK_SIZE: usize = 1000;
 const SMALL_BLOCK_TRACE_PROBABILITY: u64 = 10;
 const REPORT_USAGE_INTERVAL: usize = 512 * MEBIBYTE;
 const SKIP_ADDR: *mut c_void = 0x700000000000 as *mut c_void;
@@ -263,17 +262,7 @@ impl<A: GlobalAlloc> MyAllocator<A> {
         tid: usize,
         stack: &mut [*mut c_void; STACK_SIZE],
     ) {
-        let should_skip_trace = layout.size() < MIN_BLOCK_SIZE
-            && murmur64(NUM_ALLOCATIONS.with(|key| {
-                // key.update() is still unstable
-                let val = key.get();
-                key.set(val + 1);
-                val
-            }) as u64)
-                % 1024
-                >= SMALL_BLOCK_TRACE_PROBABILITY;
-
-        if should_skip_trace {
+        if !Self::should_skip_trace(layout) {
             stack[0] = SKIPPED_TRACE;
             return;
         }
@@ -304,6 +293,24 @@ impl<A: GlobalAlloc> MyAllocator<A> {
                 }
             }
         })
+    }
+
+    unsafe fn should_skip_trace(layout: Layout) -> bool {
+        match layout.size() {
+            // 1% of the time
+            0..=999 => {
+                (murmur64(NUM_ALLOCATIONS.with(|key| {
+                    // key.update() is still unstable
+                    let val = key.get();
+                    key.set(val + 1);
+                    val
+                }) as u64)
+                    % 1024)
+                    >= SMALL_BLOCK_TRACE_PROBABILITY
+            }
+            // 100%
+            _ => false,
+        }
     }
 
     unsafe fn save_trace_to_file(tid: usize, addr: *mut c_void) {
