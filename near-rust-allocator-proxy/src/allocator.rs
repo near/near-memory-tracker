@@ -3,10 +3,10 @@ use std::alloc::{GlobalAlloc, Layout};
 use std::cell::Cell;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::mem;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::{fs, mem};
 
 const MEBIBYTE: usize = 1024 * 1024;
 const REPORT_USAGE_INTERVAL: usize = 512 * MEBIBYTE;
@@ -310,6 +310,7 @@ impl<A: GlobalAlloc> MyAllocator<A> {
 
     unsafe fn save_trace_to_file(tid: usize, addr: *mut c_void) {
         backtrace::resolve(addr, |symbol| {
+            let _ = fs::create_dir_all("/tmp/logs");
             let file_name = format!("/tmp/logs/{}", tid);
             if let Ok(mut file) =
                 OpenOptions::new().create(true).write(true).append(true).open(file_name)
