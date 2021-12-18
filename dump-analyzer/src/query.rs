@@ -16,6 +16,8 @@ impl QueryCmd {
         for smap in smaps {
             info!(?smap);
         }
+        let page_map_file = PathBuf::from("/proc").join(self.pid.to_string()).join("pagemap");
+        info!(?page_map_file);
         Ok(())
     }
 }
