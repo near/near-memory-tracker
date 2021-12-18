@@ -1,4 +1,6 @@
-use crate::allocator::{ENABLE_STACK_TRACE, REPORT_USAGE_INTERVAL, SAVE_STACK_TRACES_TO_FILE};
+use crate::allocator::{
+    ENABLE_STACK_TRACE, LOGS_PATH, REPORT_USAGE_INTERVAL, SAVE_STACK_TRACES_TO_FILE,
+};
 use std::sync::atomic::Ordering;
 
 #[derive(Default)]
@@ -25,7 +27,8 @@ impl AllocatorConfig {
 
     /// Set file where to write stack traces
     pub fn set_traces_file(self, _file_path: &str) -> Self {
-        panic!("NOT IMPLEMENTED");
+        *LOGS_PATH.lock().unwrap() = _file_path.to_string();
+        self
     }
 }
 
