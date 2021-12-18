@@ -14,6 +14,7 @@ edition = "2021"
 backtrace = "0.3"
 nix = "0.15.0"
 tracing = "0.1.13"
+once_cell = "1"
 
 [dev-dependencies]
 criterion = "0.3.5"

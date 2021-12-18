@@ -1,26 +1,26 @@
 use backtrace::Backtrace;
+use once_cell::sync::Lazy;
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::Cell;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::mem;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::{fs, mem};
+use std::sync::Mutex;
 
 const MEBIBYTE: usize = 1024 * 1024;
-const REPORT_USAGE_INTERVAL: usize = 512 * MEBIBYTE;
 const SKIP_ADDR: *mut c_void = 0x700000000000 as *mut c_void;
+/// Configure how often should we print stack trace, whenever new record is reached.
+pub(crate) static REPORT_USAGE_INTERVAL: AtomicUsize = AtomicUsize::new(512 * MEBIBYTE);
 /// Should be a configurable option.
-static SAVE_STACK_TRACES_TO_FILE: AtomicBool = AtomicBool::new(false);
+pub(crate) static SAVE_STACK_TRACES_TO_FILE: AtomicBool = AtomicBool::new(false);
 /// Should be a configurable option.
-#[cfg(target_os = "linux")]
-static ENABLE_STACK_TRACE: AtomicBool = AtomicBool::new(true);
-const LOGS_PATH: &str = "/tmp/logs";
-
-// Currently there is no point in getting stack traces on non-linux platform, because other tools don't support linux.
-#[cfg(not(target_os = "linux"))]
-const ENABLE_STACK_TRACE: AtomicBool = AtomicBool::new(false);
+pub(crate) static ENABLE_STACK_TRACE: AtomicBool = AtomicBool::new(false);
+/// TODO: Make this configurable.
+pub(crate) static LOGS_PATH: Lazy<Mutex<String>> =
+    Lazy::new(|| Mutex::new("/tmp/logs".to_string()));
 
 const COUNTERS_SIZE: usize = 16384;
 static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE] = unsafe {
@@ -238,7 +238,11 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
 impl<A: GlobalAlloc> MyAllocator<A> {
     unsafe fn print_stack_trace_on_memory_spike(layout: Layout, tid: usize, memory_usage: usize) {
         MEMORY_USAGE_LAST_REPORT.with(|memory_usage_last_report| {
-            if memory_usage > REPORT_USAGE_INTERVAL + memory_usage_last_report.get() {
+            if memory_usage
+                > REPORT_USAGE_INTERVAL
+                    .load(Ordering::Relaxed)
+                    .saturating_add(memory_usage_last_report.get())
+            {
                 memory_usage_last_report.set(memory_usage);
                 tracing::warn!(
                     tid,
@@ -310,9 +314,10 @@ impl<A: GlobalAlloc> MyAllocator<A> {
     }
 
     unsafe fn save_trace_to_file(tid: usize, addr: *mut c_void) {
+        // This may be slow, but that's optional so it's fine.
+        let logs_path = LOGS_PATH.lock().unwrap().to_string();
         backtrace::resolve(addr, |symbol| {
-            let _ = fs::create_dir_all(LOGS_PATH);
-            let file_name = format!("{}/{}", LOGS_PATH, tid);
+            let file_name = format!("{}/{}", logs_path, tid);
             if let Ok(mut file) =
                 OpenOptions::new().create(true).write(true).append(true).open(file_name)
             {
