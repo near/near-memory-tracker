@@ -168,17 +168,17 @@ pub fn reset_memory_usage_max() {
     MEMORY_USAGE_MAX.with(|x| x.set(memory_usage));
 }
 
-pub struct MyAllocator<A> {
+pub struct ProxyAllocator<A> {
     inner: A,
 }
 
-impl<A> MyAllocator<A> {
-    pub const fn new(inner: A) -> MyAllocator<A> {
-        MyAllocator { inner }
+impl<A> ProxyAllocator<A> {
+    pub const fn new(inner: A) -> ProxyAllocator<A> {
+        ProxyAllocator { inner }
     }
 }
 
-unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
+unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let tid = get_tid();
         let new_layout =
@@ -235,7 +235,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
     }
 }
 
-impl<A: GlobalAlloc> MyAllocator<A> {
+impl<A: GlobalAlloc> ProxyAllocator<A> {
     unsafe fn print_stack_trace_on_memory_spike(layout: Layout, tid: usize, memory_usage: usize) {
         MEMORY_USAGE_LAST_REPORT.with(|memory_usage_last_report| {
             if memory_usage
@@ -256,7 +256,7 @@ impl<A: GlobalAlloc> MyAllocator<A> {
     }
 }
 
-impl<A: GlobalAlloc> MyAllocator<A> {
+impl<A: GlobalAlloc> ProxyAllocator<A> {
     #[inline]
     unsafe fn compute_stack_trace(
         layout: Layout,
@@ -358,7 +358,7 @@ pub fn print_counters_ary() {
 
 #[cfg(test)]
 mod test {
-    use crate::allocator::{print_counters_ary, total_memory_usage, MyAllocator};
+    use crate::allocator::{print_counters_ary, total_memory_usage, ProxyAllocator};
     use std::alloc::{GlobalAlloc, Layout};
     use std::ptr::null_mut;
     use tracing_subscriber::util::SubscriberInitExt;
@@ -369,8 +369,8 @@ mod test {
         print_counters_ary();
     }
 
-    static ALLOC: MyAllocator<tikv_jemallocator::Jemalloc> =
-        MyAllocator::new(tikv_jemallocator::Jemalloc);
+    static ALLOC: ProxyAllocator<tikv_jemallocator::Jemalloc> =
+        ProxyAllocator::new(tikv_jemallocator::Jemalloc);
 
     #[test]
     // Works only if run alone.
