@@ -17,6 +17,22 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Build
-      run: cd near-rust-allocator-proxy && cargo build --verbose
+      run: RUSTFLAGS='-D warnings' cargo build --verbose --workspace
+
+  tests:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
     - name: Run tests
-      run: cd near-rust-allocator-proxy && cargo test --verbose
+      run: RUSTFLAGS='-D warnings' cargo test --verbose --workspace
+
+  clippy:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Run clippy
+      run: cargo clippy -- -D clippy::all
