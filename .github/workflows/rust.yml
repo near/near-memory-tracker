@@ -90,3 +90,20 @@ jobs:
     - name: Run cargo-deny
       run: |
         cargo-deny --all-features --workspace check Advisories Bans Sources
+
+  cargo-fmt:
+    runs-on: ubuntu-20.04
+
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/cache@v2
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-fmt
+    - name: Run cargo fmt
+      run: cargo fmt --all -- --check
