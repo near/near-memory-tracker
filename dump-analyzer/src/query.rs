@@ -1,4 +1,4 @@
-use crate::utils::read_lines;
+use crate::utils::{read_lines, split};
 use anyhow::*;
 use std::path::PathBuf;
 use tracing::*;
@@ -12,47 +12,45 @@ pub(crate) struct QueryCmd {
 impl QueryCmd {
     pub(crate) fn handle(&self) -> anyhow::Result<()> {
         info!(?self.pid);
-        let _ = read_smaps(self.pid).with_context(|| "read_smaps failed")?;
+        let smaps = read_smaps(self.pid).with_context(|| "read_smaps failed")?;
+        for smap in smaps {
+            info!(?smap);
+        }
         Ok(())
     }
 }
 
+#[derive(Debug)]
 #[allow(unused)]
 struct Smap {
     from: u64,
     to: u64,
-    mapped_file: String,
+    mapped_file: Option<String>,
     is_stack: bool,
     offset: u64,
 }
 
-fn read_smaps(pid: usize) -> anyhow::Result<Vec<Smap>> {
+fn read_smaps(pid: usize) -> Result<Vec<Smap>> {
     let path = PathBuf::from("/proc").join(pid.to_string()).join("smaps");
     info!(?path);
-    for line in read_lines(path)? {
-        info!(?line)
-        /*
-                uint64_t a1 = 0, a2 = 0, offset = 0;
-                char flags[256];
+    Ok(read_lines(path)?
+        .map(|l| (split(&l), l))
+        .filter(|(s, _)| s.len() >= 3 && s[0].len() == 25)
+        .map(|(split, line)| {
+            let addresses = &split[0];
+            let flags = &split[1];
+            let offset = &split[2];
 
-        // 7f34d3290000-7f34e3a00000 r--p 00000000 0
-                if (sscanf( str, "%" PRIx64 "-%" PRIx64 " %s %" PRIX64, &a1, &a2, flags, &offset) >= 2) {
-                    sscanf( str, "%" PRIx64 "-%" PRIx64, &a1, &a2);
-                    string mapped_file;
-                    if (strlen(str) >= 73) {
-                        mapped_file = string(&str[73]);
-                    }
-                    result.push_back((Smap){a1, a2, mapped_file, false, offset});
-                }
-                if (result.size() > 0 && strncmp(str, "VmFlags:", strlen("VmFlags:")) == 0) {
-                    stringstream ss(str);
-                    string tmp;
-                    while (ss >> tmp) if (tmp == "gd") result.back().is_stack = true;
+            let mapped_file = if line.len() > 73 { Some(line[73..].to_string()) } else { None };
+            info!(?line);
+            info!(?addresses, ?flags, ?offset, ?mapped_file);
 
-        *
-                 */
-    }
-    bail!("NOT IMPLEMENTED")
+            let from = 0;
+            let to = 0;
+            let offset = 0;
+            Smap { from, to, mapped_file, is_stack: false, offset }
+        })
+        .collect())
 }
 
 /*
