@@ -28,7 +28,7 @@ jobs:
           target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-build
     - name: Build
-      run: cargo build --verbose --workspace
+      run: cargo build --verbose -p near-rust-allocator-proxy
 
   build-windows-2022:
     runs-on: windows-2022
@@ -45,8 +45,9 @@ jobs:
           target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-build
     - name: Build
-      run: cargo build --verbose --workspace
-  build-ubunut-20-04:
+      run: cargo build --verbose -p near-rust-allocator-proxy
+
+  build-ubuntu-20-04:
     runs-on: ubuntu-20.04
 
     steps:
