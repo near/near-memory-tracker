@@ -44,12 +44,14 @@ jobs:
 
     steps:
     - name: Cache multiple paths
+      id: cache-primes
       uses: actions/cache@v2
       with:
         path: |
           ~/.cargo
         key: ${{ runner.os }}-cargo-deny
     - name: Install cargo-deny
+      if: steps.cache-primes.outputs.cache-hit != 'true'
       run: |
         cargo install cargo-deny
     - uses: actions/checkout@v2
