@@ -63,6 +63,8 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - name: Run clippy
       run: |
+        pwd
+        echo *
         cargo clippy -- -D clippy::all
 
   cargo-deny:
