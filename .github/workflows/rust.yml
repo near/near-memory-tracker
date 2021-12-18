@@ -65,7 +65,7 @@ jobs:
       run: |
         pwd
         echo *
-        cargo clippy -- -D clippy::all
+        cargo clippy --all-targets -- -D clippy::all
 
   cargo-deny:
 
