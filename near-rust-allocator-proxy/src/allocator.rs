@@ -9,18 +9,15 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::{fs, mem};
 
 const MEBIBYTE: usize = 1024 * 1024;
-const REPORT_USAGE_INTERVAL: usize = 512 * MEBIBYTE;
 const SKIP_ADDR: *mut c_void = 0x700000000000 as *mut c_void;
+/// Configure how often should we print stack trace, whenever new record is reached.
+pub(crate) static REPORT_USAGE_INTERVAL: AtomicUsize = AtomicUsize::new(512 * MEBIBYTE);
 /// Should be a configurable option.
-static SAVE_STACK_TRACES_TO_FILE: AtomicBool = AtomicBool::new(false);
+pub(crate) static SAVE_STACK_TRACES_TO_FILE: AtomicBool = AtomicBool::new(false);
 /// Should be a configurable option.
-#[cfg(target_os = "linux")]
-static ENABLE_STACK_TRACE: AtomicBool = AtomicBool::new(true);
+pub(crate) static ENABLE_STACK_TRACE: AtomicBool = AtomicBool::new(false);
+/// TODO: Make this configurable.
 const LOGS_PATH: &str = "/tmp/logs";
-
-// Currently there is no point in getting stack traces on non-linux platform, because other tools don't support linux.
-#[cfg(not(target_os = "linux"))]
-const ENABLE_STACK_TRACE: AtomicBool = AtomicBool::new(false);
 
 const COUNTERS_SIZE: usize = 16384;
 static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE] = unsafe {
@@ -238,7 +235,11 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
 impl<A: GlobalAlloc> MyAllocator<A> {
     unsafe fn print_stack_trace_on_memory_spike(layout: Layout, tid: usize, memory_usage: usize) {
         MEMORY_USAGE_LAST_REPORT.with(|memory_usage_last_report| {
-            if memory_usage > REPORT_USAGE_INTERVAL + memory_usage_last_report.get() {
+            if memory_usage
+                > REPORT_USAGE_INTERVAL
+                    .load(Ordering::Relaxed)
+                    .saturating_add(memory_usage_last_report.get())
+            {
                 memory_usage_last_report.set(memory_usage);
                 tracing::warn!(
                     tid,
