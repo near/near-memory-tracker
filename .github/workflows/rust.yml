@@ -24,7 +24,7 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
     - name: Build
       run: RUSTFLAGS='-D warnings' cargo build --verbose --workspace
 
@@ -42,7 +42,7 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
     - name: Run tests
       run: RUSTFLAGS='-D warnings' cargo test --verbose --workspace
 
@@ -60,7 +60,7 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
     - name: Run clippy
       run: |
         pwd
@@ -81,7 +81,7 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-deny
+        key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}-deny
     - name: Install cargo-deny
       if: steps.cache-primes.outputs.cache-hit != 'true'
       run: |
