@@ -16,6 +16,15 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - uses: actions/cache@v2
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - name: Build
       run: RUSTFLAGS='-D warnings' cargo build --verbose --workspace
 
@@ -25,6 +34,15 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - uses: actions/cache@v2
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - name: Run tests
       run: RUSTFLAGS='-D warnings' cargo test --verbose --workspace
 
@@ -34,6 +52,15 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - uses: actions/cache@v2
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
     - name: Run clippy
       run: |
         cargo clippy -- -D clippy::all
@@ -43,18 +70,20 @@ jobs:
     runs-on: ubuntu-20.04
 
     steps:
-    - name: Cache multiple paths
-      id: cache-primes
-      uses: actions/cache@v2
+    - uses: actions/checkout@v2
+    - uses: actions/cache@v2
       with:
         path: |
-          ~/.cargo
-        key: ${{ runner.os }}-cargo-deny
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-deny
     - name: Install cargo-deny
       if: steps.cache-primes.outputs.cache-hit != 'true'
       run: |
         cargo install cargo-deny
-    - uses: actions/checkout@v2
     - name: Run cargo-deny
       run: |
         cargo-deny --all-features --workspace check Advisories Bans Sources
