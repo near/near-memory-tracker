@@ -74,6 +74,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - uses: actions/cache@v2
+      id: deny-cache
       with:
         path: |
           ~/.cargo/bin/
@@ -83,7 +84,7 @@ jobs:
           target/
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-cargo-deny
     - name: Install cargo-deny
-      if: steps.cache-primes.outputs.cache-hit != 'true'
+      if: steps.deny-cache.outputs.cache-hit != 'true'
       run: |
         cargo install cargo-deny
     - name: Run cargo-deny
