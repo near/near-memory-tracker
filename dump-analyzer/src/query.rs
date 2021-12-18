@@ -3,21 +3,40 @@ use anyhow::*;
 use std::path::PathBuf;
 use tracing::*;
 
+const PAGE_SIZE: usize = 4096;
+
 #[derive(clap_derive::Parser, Debug)]
 pub(crate) struct QueryCmd {
     #[clap(long)]
     pid: usize,
 }
 
+/*
+bool is_page_present(FILE *f, uint64_t addr) {
+fseek(f, addr/PAGE_SIZE*PAGEMAP_ENTRY, SEEK_SET);
+uint64_t mask=0;
+size_t n = fread(&mask,1,sizeof(mask),f);
+if (n == 0) return false;
+
+return (mask >> 63) & 1;
+}
+ */
+
+fn is_page_present(addr: u64) -> bool {
+    panic!("NOT IMPLEMENTED")
+}
+
 impl QueryCmd {
     pub(crate) fn handle(&self) -> anyhow::Result<()> {
         info!(?self.pid);
         let smaps = read_smaps(self.pid).with_context(|| "read_smaps failed")?;
-        for smap in smaps {
-            info!(?smap);
-        }
         let page_map_file = PathBuf::from("/proc").join(self.pid.to_string()).join("pagemap");
         info!(?page_map_file);
+
+        for smap in smaps {
+            info!(?smap);
+            is_page_present(smap.from);
+        }
         Ok(())
     }
 }
