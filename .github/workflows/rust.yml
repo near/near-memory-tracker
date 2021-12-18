@@ -52,7 +52,6 @@ jobs:
     - name: Install cargo-deny
       run: |
         cargo install cargo-deny
-    - uses: actions/cache@v2
     - uses: actions/checkout@v2
     - name: Run cargo-deny
       run: |
