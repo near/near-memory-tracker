@@ -3,7 +3,7 @@ use anyhow::*;
 use std::path::PathBuf;
 use tracing::*;
 
-const PAGE_SIZE: usize = 4096;
+const _PAGE_SIZE: usize = 4096;
 
 #[derive(clap_derive::Parser, Debug)]
 pub(crate) struct QueryCmd {
@@ -22,7 +22,7 @@ return (mask >> 63) & 1;
 }
  */
 
-fn is_page_present(addr: u64) -> bool {
+fn is_page_present(_addr: u64) -> bool {
     panic!("NOT IMPLEMENTED")
 }
 
