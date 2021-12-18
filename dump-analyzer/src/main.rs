@@ -1,4 +1,5 @@
 mod opts;
+mod query;
 
 use crate::opts::{Opts, SubCommand};
 use clap::Parser;
