@@ -8,6 +8,6 @@ pub fn read_lines(file_name: impl AsRef<Path>) -> anyhow::Result<impl Iterator<I
     Ok(io::BufReader::new(file).lines().filter_map(|x| x.ok()))
 }
 
-pub fn split(xxx: &str) -> Vec<String> {
-    xxx.split(' ').into_iter().map(|x| x.to_string()).collect()
+pub fn split(arg: &str, split_char: char) -> Vec<String> {
+    arg.split(split_char).into_iter().map(|x| x.to_string()).collect()
 }
