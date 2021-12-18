@@ -10,16 +10,18 @@ pub(crate) struct Opts {
 
 #[derive(clap_derive::Parser, Debug)]
 pub(super) enum SubCommand {
-    #[clap(name = "refactor_deepsize")]
-    Empty(EmptyCmd),
+    Query(QueryCmd),
 }
 
 #[derive(clap_derive::Parser, Debug)]
-pub(crate) struct EmptyCmd {}
+pub(crate) struct QueryCmd {
+    #[clap(long)]
+    pid: String,
+}
 
-impl EmptyCmd {
+impl QueryCmd {
     pub(crate) fn handle(&self) -> anyhow::Result<()> {
-        println!("Hello World");
+        tracing::info!(?self.pid);
         Ok(())
     }
 }
