@@ -42,15 +42,43 @@ static mut CHECKED_CACHE: [u8; CACHE_SIZE] = [0; CACHE_SIZE];
 
 const STACK_SIZE: usize = 1;
 
-#[repr(C)]
-struct AllocHeader {
-    magic: u64,
-    size: u64,
-    tid: u64,
+#[derive(Debug)]
+#[repr(C, align(8))]
+pub struct AllocHeader {
+    magic: usize,
+    size: usize,
+    tid: usize,
     stack: [*mut c_void; STACK_SIZE],
 }
+pub const ALLOC_HEADER_SIZE: usize = mem::size_of::<AllocHeader>();
 
-const ALLOC_HEADER_SIZE: usize = mem::size_of::<AllocHeader>();
+impl AllocHeader {
+    unsafe fn new(layout: Layout, tid: usize) -> AllocHeader {
+        AllocHeader {
+            magic: MAGIC_RUST + STACK_SIZE,
+            size: layout.size(),
+            tid,
+            stack: [null_mut::<c_void>(); STACK_SIZE],
+        }
+    }
+
+    pub fn valid(&self) -> bool {
+        self.is_allocated() || self.is_freed()
+    }
+
+    pub fn is_allocated(&self) -> bool {
+        self.magic == (MAGIC_RUST + STACK_SIZE)
+    }
+
+    pub fn is_freed(&self) -> bool {
+        self.magic == MAGIC_RUST + STACK_SIZE + FREED_MAGIC
+    }
+
+    pub fn mark_as_freed(&mut self) {
+        self.magic = MAGIC_RUST + STACK_SIZE + FREED_MAGIC;
+    }
+}
+
 const MAGIC_RUST: usize = 0x12345678991100;
 const FREED_MAGIC: usize = 0x100;
 
@@ -197,12 +225,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
             }
         });
 
-        let mut header = AllocHeader {
-            magic: (MAGIC_RUST + STACK_SIZE) as u64,
-            size: layout.size() as u64,
-            tid: tid as u64,
-            stack: [null_mut::<c_void>(); STACK_SIZE],
-        };
+        let mut header = AllocHeader::new(layout, tid);
 
         IN_TRACE.with(|in_trace| {
             if in_trace.replace(1) != 0 {
@@ -225,8 +248,10 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
 
         ptr = ptr.offset(-(ALLOC_HEADER_SIZE as isize));
 
-        (*(ptr as *mut AllocHeader)).magic = (MAGIC_RUST + STACK_SIZE + FREED_MAGIC) as u64;
-        let header_tid: usize = (*(ptr as *mut AllocHeader)).tid as usize;
+        let ah = &mut (*(ptr as *mut AllocHeader));
+        debug_assert!(ah.is_allocated());
+        ah.mark_as_freed();
+        let header_tid = ah.tid;
 
         MEM_SIZE[header_tid % COUNTERS_SIZE].fetch_sub(layout.size(), Ordering::Relaxed);
         MEM_CNT[header_tid % COUNTERS_SIZE].fetch_sub(1, Ordering::Relaxed);
@@ -272,8 +297,8 @@ impl<A: GlobalAlloc> ProxyAllocator<A> {
                 if addr >= SKIP_ADDR as *mut c_void {
                     true
                 } else {
-                    let hash = murmur64(addr as u64) % (8 * CACHE_SIZE as u64);
-                    let i = (hash / 8) as usize;
+                    let hash = (murmur64(addr as u64) % (8 * CACHE_SIZE as u64)) as usize;
+                    let i = hash / 8;
                     let cur_bit = 1 << (hash % 8);
                     if SKIP_CACHE[i] & cur_bit != 0 {
                         true
