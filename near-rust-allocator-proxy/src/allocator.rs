@@ -201,6 +201,11 @@ pub struct ProxyAllocator<A> {
 }
 
 impl<A> ProxyAllocator<A> {
+    /// Test
+    /// Test
+    /// Test
+    /// Test
+    /// Test
     pub const fn new(inner: A) -> ProxyAllocator<A> {
         ProxyAllocator { inner }
     }
@@ -213,8 +218,9 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
     /// # use near_rust_allocator_proxy::ProxyAllocator;
     /// # let layout = Layout::from_size_align(127, 8).unwrap();
     /// # let allocator = ProxyAllocator::new(tikv_jemallocator::Jemalloc);
-    ///
-    /// unsafe {allocator.alloc(layout)};
+    /// # unsafe {
+    ///     allocator.alloc(layout)
+    /// # };
     /// ```
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let tid = get_tid();
