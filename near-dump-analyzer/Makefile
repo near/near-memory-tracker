@@ -9,17 +9,15 @@ endif
 
 PID := $(shell pidof neard)
 
-all: bins/dump bins/near-c-allocator-proxy.so
+all: bins/near-c-allocator-proxy.so
 
 bins/near-c-allocator-proxy.so: near-c-allocator-proxy.c
 	mkdir -p bins
 	gcc -O2 -shared -fPIC -o bins/near-c-allocator-proxy.so near-c-allocator-proxy.c
 
-bins/dump: dump.cpp
-	mkdir -p bins
-	g++ -O2 -Wall -fsanitize=address -Warray-bounds -fbounds-check -g dump.cpp -o bins/dump --std=c++17
-
 run: all
+	echo NEEDS TO BE REWRITTEN - DEPRECATED
+	exit 1
 	rm -rf ${HOME}/.nearup/logs/*
 	rm -rf /tmp/logs
 	mkdir -p /tmp/logs
@@ -33,6 +31,8 @@ run: all
 
 
 dump: all
+	echo NEEDS TO BE REWRITTEN - DEPRECATED
+	exit 1
 	echo PID=$(PID) ${PID};
 	# rm -rf symbols;
 	mkdir -p /tmp/logs;
