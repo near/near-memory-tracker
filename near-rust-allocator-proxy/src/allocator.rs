@@ -210,7 +210,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let tid = get_tid();
         let new_layout =
-            Layout::from_size_align(layout.size() + ALLOC_HEADER_SIZE, layout.align()).unwrap();
+            Layout::from_size_align((layout.size() + ALLOC_HEADER_SIZE), layout.align()).unwrap();
 
         let res = self.inner.alloc(new_layout);
         let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE]
@@ -238,15 +238,17 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
             in_trace.set(0);
         });
         *(res as *mut AllocHeader) = header;
+        let offset = new_layout.size() - layout.size();
 
-        res.add(ALLOC_HEADER_SIZE)
+        res.add(offset)
     }
 
     unsafe fn dealloc(&self, mut ptr: *mut u8, layout: Layout) {
         let new_layout =
             Layout::from_size_align(layout.size() + ALLOC_HEADER_SIZE, layout.align()).unwrap();
+        let offset = new_layout.size() - layout.size();
 
-        ptr = ptr.offset(-(ALLOC_HEADER_SIZE as isize));
+        ptr = ptr.offset(-(offset as isize));
 
         let ah = &mut (*(ptr as *mut AllocHeader));
         debug_assert!(ah.is_allocated());
