@@ -207,6 +207,15 @@ impl<A> ProxyAllocator<A> {
 }
 
 unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
+    /// Allocates memory given for given `layout`.
+    /// ```
+    /// # use std::alloc::{GlobalAlloc, Layout};
+    /// # use near_rust_allocator_proxy::ProxyAllocator;
+    /// # let layout = Layout::from_size_align(127, 8).unwrap();
+    /// # let allocator = ProxyAllocator::new(tikv_jemallocator::Jemalloc);
+    ///
+    /// unsafe {allocator.alloc(layout)};
+    /// ```
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let tid = get_tid();
         let new_layout =
