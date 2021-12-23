@@ -210,7 +210,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let tid = get_tid();
         let new_layout =
-            Layout::from_size_align((layout.size() + ALLOC_HEADER_SIZE), layout.align()).unwrap();
+            Layout::from_size_align(layout.size() + ALLOC_HEADER_SIZE, layout.align()).unwrap();
 
         let res = self.inner.alloc(new_layout);
         let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE]
