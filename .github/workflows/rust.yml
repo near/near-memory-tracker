@@ -13,6 +13,14 @@ env:
   RUST_BACKTRACE: short
 
 jobs:
+  windows:
+    runs-on: windows-2022
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build
+      run: cargo build --verbose --workspace
+
   build:
     runs-on: ubuntu-20.04
 
