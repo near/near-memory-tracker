@@ -13,7 +13,7 @@ env:
   RUST_BACKTRACE: short
 
 jobs:
-  windows:
+  macos:
     runs-on: macos-11
 
     steps:
