@@ -1,119 +1,140 @@
 use backtrace::Backtrace;
-use libc;
-use log::{info, warn};
-use rand::Rng;
+use once_cell::sync::Lazy;
 use std::alloc::{GlobalAlloc, Layout};
-use std::cell::RefCell;
-use std::cmp::{max, min};
+use std::cell::Cell;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::mem;
 use std::os::raw::c_void;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::ptr::null_mut;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 const MEBIBYTE: usize = 1024 * 1024;
-const MIN_BLOCK_SIZE: usize = 1000;
-const SMALL_BLOCK_TRACE_PROBABILITY: usize = 1;
-const REPORT_USAGE_INTERVAL: usize = 512 * MEBIBYTE;
-const SKIP_ADDR: u64 = 0x700000000000;
-const PRINT_STACK_TRACE_ON_MEMORY_SPIKE: bool = true;
-
-#[cfg(target_os = "linux")]
-const ENABLE_STACK_TRACE: bool = true;
-
-// Currently there is no point in getting stack traces on non-linux platform, because other tools don't support linux.
-#[cfg(not(target_os = "linux"))]
-const ENABLE_STACK_TRACE: bool = false;
+const SKIP_ADDR: *mut c_void = 0x700000000000 as *mut c_void;
+/// Configure how often should we print stack trace, whenever new record is reached.
+pub(crate) static REPORT_USAGE_INTERVAL: AtomicUsize = AtomicUsize::new(512 * MEBIBYTE);
+/// Should be a configurable option.
+pub(crate) static SAVE_STACK_TRACES_TO_FILE: AtomicBool = AtomicBool::new(false);
+/// Should be a configurable option.
+pub(crate) static ENABLE_STACK_TRACE: AtomicBool = AtomicBool::new(false);
+/// TODO: Make this configurable.
+pub(crate) static LOGS_PATH: Lazy<Mutex<String>> =
+    Lazy::new(|| Mutex::new("/tmp/logs".to_string()));
 
 const COUNTERS_SIZE: usize = 16384;
-static TOTAL_MEMORY_USAGE: AtomicUsize = AtomicUsize::new(0);
 static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE] = unsafe {
     // SAFETY: Rust [guarantees](https://doc.rust-lang.org/stable/std/sync/atomic/struct.AtomicUsize.html)
     // that `usize` and `AtomicUsize` have the same representation.
-    std::mem::transmute::<[usize; COUNTERS_SIZE], [AtomicUsize; COUNTERS_SIZE]>([0usize; 16384])
+    std::mem::transmute::<[usize; COUNTERS_SIZE], [AtomicUsize; COUNTERS_SIZE]>(
+        [0usize; COUNTERS_SIZE],
+    )
 };
 static MEM_CNT: [AtomicUsize; COUNTERS_SIZE] = unsafe {
-    std::mem::transmute::<[usize; COUNTERS_SIZE], [AtomicUsize; COUNTERS_SIZE]>([0usize; 16384])
+    std::mem::transmute::<[usize; COUNTERS_SIZE], [AtomicUsize; COUNTERS_SIZE]>(
+        [0usize; COUNTERS_SIZE],
+    )
 };
 
-static mut SKIP_PTR: [u8; 1 << 20] = [0; 1 << 20];
-static mut CHECKED_PTR: [u8; 1 << 20] = [0; 1 << 20];
+const CACHE_SIZE: usize = 1 << 20;
+static mut SKIP_CACHE: [u8; CACHE_SIZE] = [0; CACHE_SIZE];
+static mut CHECKED_CACHE: [u8; CACHE_SIZE] = [0; CACHE_SIZE];
 
 const STACK_SIZE: usize = 1;
-const MAX_STACK: usize = 15;
-const SAVE_STACK_TRACES_TO_FILE: bool = false;
 
-const SKIPPED_TRACE: *mut c_void = 1 as *mut c_void;
-const MISSING_TRACE: *mut c_void = 2 as *mut c_void;
-
-#[repr(C)]
-struct AllocHeader {
-    magic: u64,
-    size: u64,
-    tid: u64,
+#[derive(Debug)]
+#[repr(C, align(8))]
+pub struct AllocHeader {
+    magic: usize,
+    size: usize,
+    tid: usize,
     stack: [*mut c_void; STACK_SIZE],
 }
+pub const ALLOC_HEADER_SIZE: usize = mem::size_of::<AllocHeader>();
 
-const HEADER_SIZE: usize = mem::size_of::<AllocHeader>();
+impl AllocHeader {
+    unsafe fn new(layout: Layout, tid: usize) -> AllocHeader {
+        AllocHeader {
+            magic: MAGIC_RUST + STACK_SIZE,
+            size: layout.size(),
+            tid,
+            stack: [null_mut::<c_void>(); STACK_SIZE],
+        }
+    }
+
+    pub fn valid(&self) -> bool {
+        self.is_allocated() || self.is_freed()
+    }
+
+    pub fn is_allocated(&self) -> bool {
+        self.magic == (MAGIC_RUST + STACK_SIZE)
+    }
+
+    pub fn is_freed(&self) -> bool {
+        self.magic == MAGIC_RUST + STACK_SIZE + FREED_MAGIC
+    }
+
+    pub fn mark_as_freed(&mut self) {
+        self.magic = MAGIC_RUST + STACK_SIZE + FREED_MAGIC;
+    }
+}
+
 const MAGIC_RUST: usize = 0x12345678991100;
+const FREED_MAGIC: usize = 0x100;
 
 thread_local! {
-    pub static TID: RefCell<usize> = RefCell::new(0);
-    pub static IN_TRACE: RefCell<usize> = RefCell::new(0);
-    pub static MEMORY_USAGE_MAX: RefCell<usize> = RefCell::new(0);
-    pub static MEMORY_USAGE_LAST_REPORT: RefCell<usize> = RefCell::new(0);
+    static TID: Cell<usize> = Cell::new(0);
+    static MEMORY_USAGE_MAX: Cell<usize> = Cell::new(0);
+    static MEMORY_USAGE_LAST_REPORT: Cell<usize> = Cell::new(0);
+    static NUM_ALLOCATIONS: Cell<usize> = Cell::new(0);
+    static IN_TRACE: Cell<usize> = Cell::new(0);
 }
 
-#[cfg(not(target_os = "linux"))]
-pub static NTHREADS: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(target_os = "linux")]
 pub fn get_tid() -> usize {
-    let res = TID.with(|t| {
-        if *t.borrow() == 0 {
-            *t.borrow_mut() = nix::unistd::gettid().as_raw() as usize;
+    TID.with(|f| {
+        let mut v = f.get();
+        if v == 0 {
+            // thread::current().id().as_u64() is still unstable
+            #[cfg(target_os = "linux")]
+            {
+                v = nix::unistd::gettid().as_raw() as usize;
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                static NTHREADS: AtomicUsize = AtomicUsize::new(0);
+                v = NTHREADS.fetch_add(1, Ordering::Relaxed) as usize;
+            }
+            f.set(v)
         }
-        *t.borrow()
-    });
-    res
+        v
+    })
 }
 
-#[cfg(not(target_os = "linux"))]
-pub fn get_tid() -> usize {
-    let res = TID.with(|t| {
-        if *t.borrow() == 0 {
-            *t.borrow_mut() = NTHREADS.fetch_add(1, Ordering::SeqCst) as usize;
-        }
-        *t.borrow()
-    });
-    res
-}
-
-pub fn murmur64(mut h: u64) -> u64 {
+fn murmur64(mut h: u64) -> u64 {
     h ^= h >> 33;
     h = h.overflowing_mul(0xff51afd7ed558ccd).0;
     h ^= h >> 33;
     h = h.overflowing_mul(0xc4ceb9fe1a85ec53).0;
     h ^= h >> 33;
-    return h;
+    h
 }
 
-const IGNORE_START: &'static [&'static str] = &[
+const IGNORE_START: &[&str] = &[
     "__rg_",
+    "_ZN10tokio_util",
+    "_ZN20reed_solomon_erasure",
+    "_ZN3std",
+    "_ZN4core",
     "_ZN5actix",
     "_ZN5alloc",
+    "_ZN5tokio",
     "_ZN6base64",
     "_ZN6cached",
-    "_ZN4core",
-    "_ZN9hashbrown",
-    "_ZN20reed_solomon_erasure",
-    "_ZN5tokio",
-    "_ZN10tokio_util",
-    "_ZN3std",
     "_ZN8smallvec",
+    "_ZN9hashbrown",
 ];
 
-const IGNORE_INSIDE: &'static [&'static str] = &[
+const IGNORE_INSIDE: &[&str] = &[
     "$LT$actix..",
     "$LT$alloc..",
     "$LT$base64..",
@@ -121,264 +142,270 @@ const IGNORE_INSIDE: &'static [&'static str] = &[
     "$LT$core..",
     "$LT$hashbrown..",
     "$LT$reed_solomon_erasure..",
-    "$LT$tokio..",
-    "$LT$tokio_util..",
     "$LT$serde_json..",
     "$LT$std..",
+    "$LT$tokio..",
+    "$LT$tokio_util..",
     "$LT$tracing_subscriber..",
+    "allocator",
 ];
 
 fn skip_ptr(addr: *mut c_void) -> bool {
-    if addr as u64 >= SKIP_ADDR {
-        return true;
-    }
     let mut found = false;
     backtrace::resolve(addr, |symbol| {
-        if let Some(name) = symbol.name() {
-            let name = name.as_str().unwrap_or("");
-            for &s in IGNORE_START {
-                if name.starts_with(s) {
-                    found = true;
-                    break;
-                }
-            }
-            for &s in IGNORE_INSIDE {
-                if name.contains(s) {
-                    found = true;
-                    break;
-                }
-            }
-        }
+        found = found
+            || symbol
+                .name()
+                .map(|name| name.as_str())
+                .flatten()
+                .map(|name| {
+                    IGNORE_START.iter().filter(|s: &&&str| name.starts_with(**s)).any(|_| true)
+                        || IGNORE_INSIDE.iter().filter(|s: &&&str| name.contains(**s)).any(|_| true)
+                })
+                .unwrap_or_default()
     });
 
-    return found;
+    found
 }
 
 pub fn total_memory_usage() -> usize {
-    TOTAL_MEMORY_USAGE.load(Ordering::SeqCst)
+    MEM_SIZE.iter().map(|v| v.load(Ordering::Relaxed)).sum()
 }
 
 pub fn current_thread_memory_usage() -> usize {
     let tid = get_tid();
-    let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::SeqCst);
-    memory_usage
+
+    MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::Relaxed)
 }
 
 pub fn thread_memory_usage(tid: usize) -> usize {
-    let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::SeqCst);
-    memory_usage
+    MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::Relaxed)
 }
 
 pub fn thread_memory_count(tid: usize) -> usize {
-    let memory_cnt = MEM_CNT[tid % COUNTERS_SIZE].load(Ordering::SeqCst);
-    memory_cnt
+    MEM_CNT[tid % COUNTERS_SIZE].load(Ordering::Relaxed)
 }
 
 pub fn current_thread_peak_memory_usage() -> usize {
-    MEMORY_USAGE_MAX.with(|x| *x.borrow())
+    MEMORY_USAGE_MAX.with(|x| x.get())
 }
 
 pub fn reset_memory_usage_max() {
     let tid = get_tid();
-    let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::SeqCst);
-    MEMORY_USAGE_MAX.with(|x| *x.borrow_mut() = memory_usage);
+    let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE].load(Ordering::Relaxed);
+    MEMORY_USAGE_MAX.with(|x| x.set(memory_usage));
 }
 
-pub struct MyAllocator<A> {
+pub struct ProxyAllocator<A> {
     inner: A,
 }
 
-impl<A> MyAllocator<A> {
-    pub const fn new(inner: A) -> MyAllocator<A> {
-        MyAllocator { inner }
+impl<A> ProxyAllocator<A> {
+    pub const fn new(inner: A) -> ProxyAllocator<A> {
+        ProxyAllocator { inner }
     }
 }
 
-unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
+unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let tid = get_tid();
         let new_layout =
-            Layout::from_size_align(layout.size() + HEADER_SIZE, layout.align()).unwrap();
+            Layout::from_size_align(layout.size() + ALLOC_HEADER_SIZE, layout.align()).unwrap();
 
         let res = self.inner.alloc(new_layout);
+        let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE]
+            .fetch_add(layout.size(), Ordering::Relaxed)
+            + layout.size();
 
-        let tid = get_tid();
-        let memory_usage = layout.size()
-            + MEM_SIZE[tid % COUNTERS_SIZE].fetch_add(layout.size(), Ordering::SeqCst);
-        TOTAL_MEMORY_USAGE.fetch_add(layout.size(), Ordering::SeqCst);
-        MEM_CNT[tid % COUNTERS_SIZE].fetch_add(1, Ordering::SeqCst);
+        MEM_CNT[tid % COUNTERS_SIZE].fetch_add(1, Ordering::Relaxed);
 
-        if PRINT_STACK_TRACE_ON_MEMORY_SPIKE
-            && memory_usage > REPORT_USAGE_INTERVAL + MEMORY_USAGE_LAST_REPORT.with(|x| *x.borrow())
-        {
-            if IN_TRACE.with(|in_trace| *in_trace.borrow()) == 0 {
-                IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 1);
-                MEMORY_USAGE_LAST_REPORT.with(|x| *x.borrow_mut() = memory_usage);
-
-                let bt = Backtrace::new();
-
-                warn!(
-                    "Thread {} reached new record of memory usage {}MiB\n{:?} added: {:?}",
-                    tid,
-                    memory_usage / MEBIBYTE,
-                    bt,
-                    layout.size() / MEBIBYTE,
-                );
-                IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 0);
+        MEMORY_USAGE_MAX.with(|val| {
+            if val.get() < memory_usage {
+                val.set(memory_usage);
             }
-        }
-        if memory_usage > MEMORY_USAGE_MAX.with(|x| *x.borrow()) {
-            MEMORY_USAGE_MAX.with(|x| *x.borrow_mut() = memory_usage);
-        }
+        });
 
-        let mut addr: Option<*mut c_void> = Some(MISSING_TRACE);
-        let mut ary: [*mut c_void; MAX_STACK + 1] = [0 as *mut c_void; MAX_STACK + 1];
-        let mut chosen_i = 0;
+        let mut header = AllocHeader::new(layout, tid);
 
-        if ENABLE_STACK_TRACE && IN_TRACE.with(|in_trace| *in_trace.borrow()) == 0 {
-            IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 1);
-            if layout.size() >= MIN_BLOCK_SIZE
-                || rand::thread_rng().gen_range(0, 100) < SMALL_BLOCK_TRACE_PROBABILITY
-            {
-                let size = libc::backtrace(ary.as_ptr() as *mut *mut c_void, MAX_STACK as i32);
-                ary[0] = 0 as *mut c_void;
-                for i in 1..min(size as usize, MAX_STACK) {
-                    addr = Some(ary[i] as *mut c_void);
-                    chosen_i = i;
-                    if ary[i] < SKIP_ADDR as *mut c_void {
-                        let hash = murmur64(ary[i] as u64) % (1 << 23);
-                        if (SKIP_PTR[(hash / 8) as usize] >> hash % 8) & 1 == 1 {
-                            continue;
-                        }
-                        if (CHECKED_PTR[(hash / 8) as usize] >> hash % 8) & 1 == 1 {
-                            break;
-                        }
-                        if SAVE_STACK_TRACES_TO_FILE {
-                            backtrace::resolve(ary[i], |symbol| {
-                                let fname = format!("/tmp/logs/{}", tid);
-                                if let Ok(mut f) = OpenOptions::new()
-                                    .create(true)
-                                    .write(true)
-                                    .append(true)
-                                    .open(fname)
-                                {
-                                    if let Some(path) = symbol.filename() {
-                                        f.write(
-                                            format!(
-                                                "PATH {:?} {} {}\n",
-                                                ary[i],
-                                                symbol.lineno().unwrap_or(0),
-                                                path.to_str().unwrap_or("<UNKNOWN>")
-                                            )
-                                            .as_bytes(),
-                                        )
-                                        .unwrap();
-                                    }
-                                    if let Some(name) = symbol.name() {
-                                        f.write(
-                                            format!("SYMBOL {:?} {}\n", ary[i], name.to_string())
-                                                .as_bytes(),
-                                        )
-                                        .unwrap();
-                                    }
-                                }
-                            });
-                        }
-
-                        let should_skip = skip_ptr(ary[i]);
-                        if should_skip {
-                            SKIP_PTR[(hash / 8) as usize] |= 1 << hash % 8;
-                            continue;
-                        }
-                        CHECKED_PTR[(hash / 8) as usize] |= 1 << hash % 8;
-
-                        if SAVE_STACK_TRACES_TO_FILE {
-                            let fname = format!("/tmp/logs/{}", tid);
-
-                            if let Ok(mut f) = OpenOptions::new()
-                                .create(true)
-                                .write(true)
-                                .append(true)
-                                .open(fname)
-                            {
-                                f.write(format!("STACK_FOR {:?}\n", addr).as_bytes())
-                                    .unwrap();
-                                let ary2: [*mut c_void; 256] = [0 as *mut c_void; 256];
-                                let size2 = libc::backtrace(ary2.as_ptr() as *mut *mut c_void, 256)
-                                    as usize;
-                                for i in 0..size2 {
-                                    let addr2 = ary2[i];
-
-                                    backtrace::resolve(addr2, |symbol| {
-                                        if let Some(name) = symbol.name() {
-                                            let name = name.as_str().unwrap_or("");
-
-                                            f.write(
-                                                format!("STACK {:?} {:?} {:?}\n", i, addr2, name)
-                                                    .as_bytes(),
-                                            )
-                                            .unwrap();
-                                        }
-                                    });
-                                }
-                            }
-                        }
-                        break;
-                    }
-                }
-            } else {
-                addr = Some(SKIPPED_TRACE);
+        IN_TRACE.with(|in_trace| {
+            if in_trace.replace(1) != 0 {
+                return;
             }
-            IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 0);
-        }
-
-        let mut stack = [0 as *mut c_void; STACK_SIZE];
-        stack[0] = addr.unwrap_or(0 as *mut c_void);
-        for i in 1..STACK_SIZE {
-            stack[i] =
-                ary[min(MAX_STACK as isize, max(0, chosen_i as isize + i as isize)) as usize];
-        }
-
-        let header = AllocHeader {
-            magic: (MAGIC_RUST + STACK_SIZE) as u64,
-            size: layout.size() as u64,
-            tid: tid as u64,
-            stack,
-        };
-
+            Self::print_stack_trace_on_memory_spike(layout, tid, memory_usage);
+            if ENABLE_STACK_TRACE.load(Ordering::Relaxed) {
+                Self::compute_stack_trace(layout, tid, &mut header.stack);
+            }
+            in_trace.set(0);
+        });
         *(res as *mut AllocHeader) = header;
 
-        res.offset(HEADER_SIZE as isize)
+        res.add(new_layout.size() - layout.size())
     }
 
     unsafe fn dealloc(&self, mut ptr: *mut u8, layout: Layout) {
         let new_layout =
-            Layout::from_size_align(layout.size() + HEADER_SIZE, layout.align()).unwrap();
+            Layout::from_size_align(layout.size() + ALLOC_HEADER_SIZE, layout.align()).unwrap();
 
-        ptr = ptr.offset(-(HEADER_SIZE as isize));
+        ptr = ptr.offset(-((new_layout.size() - layout.size()) as isize));
 
-        (*(ptr as *mut AllocHeader)).magic = (MAGIC_RUST + STACK_SIZE + 0x100) as u64;
-        let tid: usize = (*(ptr as *mut AllocHeader)).tid as usize;
+        let ah = &mut (*(ptr as *mut AllocHeader));
+        debug_assert!(ah.is_allocated());
+        ah.mark_as_freed();
+        let header_tid = ah.tid;
 
-        MEM_SIZE[tid % COUNTERS_SIZE].fetch_sub(layout.size(), Ordering::SeqCst);
-        TOTAL_MEMORY_USAGE.fetch_sub(layout.size(), Ordering::SeqCst);
-        MEM_CNT[tid % COUNTERS_SIZE].fetch_sub(1, Ordering::SeqCst);
+        MEM_SIZE[header_tid % COUNTERS_SIZE].fetch_sub(layout.size(), Ordering::Relaxed);
+        MEM_CNT[header_tid % COUNTERS_SIZE].fetch_sub(1, Ordering::Relaxed);
 
         self.inner.dealloc(ptr, new_layout);
     }
 }
 
-pub fn print_counters_ary() {
-    info!("tid {}", get_tid());
+impl<A: GlobalAlloc> ProxyAllocator<A> {
+    unsafe fn print_stack_trace_on_memory_spike(layout: Layout, tid: usize, memory_usage: usize) {
+        MEMORY_USAGE_LAST_REPORT.with(|memory_usage_last_report| {
+            if memory_usage
+                > REPORT_USAGE_INTERVAL
+                    .load(Ordering::Relaxed)
+                    .saturating_add(memory_usage_last_report.get())
+            {
+                memory_usage_last_report.set(memory_usage);
+                tracing::warn!(
+                    tid,
+                    memory_usage_mb = memory_usage / MEBIBYTE,
+                    added_mb = layout.size() / MEBIBYTE,
+                    bt = ?Backtrace::new(),
+                    "reached new record of memory usage",
+                );
+            }
+        });
+    }
+}
+
+impl<A: GlobalAlloc> ProxyAllocator<A> {
+    #[inline]
+    unsafe fn compute_stack_trace(
+        layout: Layout,
+        tid: usize,
+        stack: &mut [*mut c_void; STACK_SIZE],
+    ) {
+        if Self::should_compute_trace(layout) {
+            const MISSING_TRACE: *mut c_void = 2 as *mut c_void;
+            stack[0] = MISSING_TRACE;
+            backtrace::trace(|frame| {
+                let addr = frame.ip();
+                stack[0] = addr as *mut c_void;
+                if addr >= SKIP_ADDR as *mut c_void {
+                    true
+                } else {
+                    let hash = (murmur64(addr as u64) % (8 * CACHE_SIZE as u64)) as usize;
+                    let i = hash / 8;
+                    let cur_bit = 1 << (hash % 8);
+                    if SKIP_CACHE[i] & cur_bit != 0 {
+                        true
+                    } else if CHECKED_CACHE[i] & cur_bit != 0 {
+                        false
+                    } else if skip_ptr(addr) {
+                        SKIP_CACHE[i] |= cur_bit;
+                        true
+                    } else {
+                        CHECKED_CACHE[i] |= cur_bit;
+
+                        if SAVE_STACK_TRACES_TO_FILE.load(Ordering::Relaxed) {
+                            Self::save_trace_to_file(tid, addr);
+                        }
+                        false
+                    }
+                }
+            })
+        }
+    }
+
+    unsafe fn should_compute_trace(layout: Layout) -> bool {
+        match layout.size() {
+            // 1% of the time
+            0..=999 => {
+                (murmur64(NUM_ALLOCATIONS.with(|key| {
+                    // key.update() is still unstable
+                    let val = key.get();
+                    key.set(val + 1);
+                    val
+                }) as u64)
+                    % 1024)
+                    < 10
+            }
+            // 100%
+            _ => true,
+        }
+    }
+
+    unsafe fn save_trace_to_file(tid: usize, addr: *mut c_void) {
+        // This may be slow, but that's optional so it's fine.
+        let logs_path = LOGS_PATH.lock().unwrap().to_string();
+        backtrace::resolve(addr, |symbol| {
+            let file_name = format!("{}/{}", logs_path, tid);
+            if let Ok(mut file) =
+                OpenOptions::new().create(true).write(true).append(true).open(file_name)
+            {
+                if let Some(path) = symbol.filename() {
+                    writeln!(
+                        file,
+                        "PATH addr={:?} symbol={} path={:?}",
+                        addr,
+                        symbol.lineno().unwrap_or_default(),
+                        path.as_os_str()
+                    )
+                    .unwrap();
+                }
+                if let Some(name) = symbol.name() {
+                    writeln!(file, "SYMBOL addr={:?} name={:?}", addr, name.as_str()).unwrap();
+                }
+            }
+        });
+    }
+}
+
+pub fn print_memory_stats() {
+    tracing::info!(tid = get_tid(), "tid");
     let mut total_cnt: usize = 0;
     let mut total_size: usize = 0;
     for idx in 0..COUNTERS_SIZE {
-        let val: usize = MEM_SIZE.get(idx).unwrap().load(Ordering::SeqCst);
+        let val = MEM_SIZE[idx].load(Ordering::Relaxed);
         if val != 0 {
-            let cnt = MEM_CNT.get(idx).unwrap().load(Ordering::SeqCst);
+            let cnt = MEM_CNT[idx].load(Ordering::Relaxed);
             total_cnt += cnt;
-            info!("COUNTERS {}: {} {}", idx, cnt, val);
             total_size += val;
+
+            tracing::info!(idx, cnt, val, "COUNTERS");
         }
     }
-    info!("COUNTERS TOTAL {} {}", total_cnt, total_size);
+    tracing::info!(total_cnt, total_size, "COUNTERS TOTAL");
+}
+
+#[cfg(test)]
+mod test {
+    use crate::allocator::{print_memory_stats, total_memory_usage, ProxyAllocator};
+    use std::alloc::{GlobalAlloc, Layout};
+    use std::ptr::null_mut;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    #[test]
+    fn test_print_counters_ary() {
+        tracing_subscriber::fmt().with_writer(std::io::stderr).finish().init();
+        print_memory_stats();
+    }
+
+    static ALLOC: ProxyAllocator<tikv_jemallocator::Jemalloc> =
+        ProxyAllocator::new(tikv_jemallocator::Jemalloc);
+
+    #[test]
+    // Works only if run alone.
+    fn test_allocator() {
+        let layout = Layout::from_size_align(32, 1).unwrap();
+        let ptr = unsafe { ALLOC.alloc(layout) };
+        assert_ne!(ptr, null_mut());
+
+        assert_eq!(total_memory_usage(), 32);
+
+        unsafe { ALLOC.dealloc(ptr, layout) };
+    }
 }
