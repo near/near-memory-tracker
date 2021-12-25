@@ -6,17 +6,6 @@ on:
   pull_request:
     branches: [ master ]
 
-  workflow_dispatch:
-    # Inputs the workflow accepts.
-    inputs:
-      name:
-        # Friendly description to be shown in the UI instead of 'name'
-        description: 'Person to greet'
-        # Default value if no value is explicitly provided
-        default: 'World'
-        # Input has to be provided for the workflow to run
-        required: true
-
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: '-D warnings'
@@ -24,40 +13,7 @@ env:
   RUST_BACKTRACE: short
 
 jobs:
-  build-macos-11:
-    runs-on: macos-11
-
-    steps:
-    - uses: actions/checkout@v2
-    - uses: actions/cache@v2
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-build
-    - name: Build
-      run: cargo build --verbose --workspace
-
-  build-windows-2022:
-    runs-on: windows-2022
-
-    steps:
-    - uses: actions/checkout@v2
-    - uses: actions/cache@v2
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-build
-    - name: Build
-      run: cargo build --verbose --workspace
-  build-ubunut-20-04:
+  build:
     runs-on: ubuntu-20.04
 
     steps:
