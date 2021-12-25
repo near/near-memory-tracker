@@ -1,11 +1,15 @@
 use backtrace::Backtrace;
+#[cfg(target_os = "linux")]
 use libc;
 use log::{info, warn};
+#[cfg(target_os = "linux")]
 use rand::Rng;
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::RefCell;
 use std::cmp::{max, min};
+#[cfg(target_os = "linux")]
 use std::fs::OpenOptions;
+#[cfg(target_os = "linux")]
 use std::io::Write;
 use std::mem;
 use std::os::raw::c_void;
