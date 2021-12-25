@@ -234,6 +234,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for MyAllocator<A> {
         let mut ary: [*mut c_void; MAX_STACK + 1] = [0 as *mut c_void; MAX_STACK + 1];
         let mut chosen_i = 0;
 
+        #[cfg(target_os = "linux")]
         if ENABLE_STACK_TRACE && IN_TRACE.with(|in_trace| *in_trace.borrow()) == 0 {
             IN_TRACE.with(|in_trace| *in_trace.borrow_mut() = 1);
             if layout.size() >= MIN_BLOCK_SIZE
