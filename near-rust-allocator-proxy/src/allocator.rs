@@ -381,15 +381,16 @@ mod test {
     #[test]
     #[serial_test::serial]
     fn test_alignment() {
-        for alignment in (0..16).map(|i| 1 << i) {
-            let layout = Layout::from_size_align(alignment, alignment).unwrap();
-            let ptr = unsafe { ALLOC.alloc(layout) };
-            assert_ne!(ptr, null_mut());
+        for alloc in (0..16).map(|i| i << 1) {
+            for alignment in (0..16).map(|i| 1 << i) {
+                let layout = Layout::from_size_align(alloc, alignment).unwrap();
+                let ptr = unsafe { ALLOC.alloc(layout) };
+                assert_ne!(ptr, null_mut());
 
-            assert_eq!(total_memory_usage(), alignment);
-            assert_eq!(ptr as usize % alignment, 0);
+                assert_eq!(ptr as usize % alignment, 0);
 
-            unsafe { ALLOC.dealloc(ptr, layout) };
+                unsafe { ALLOC.dealloc(ptr, layout) };
+            }
         }
     }
 
@@ -397,15 +398,16 @@ mod test {
     #[serial_test::serial]
     fn test_alignment_with_offset() {
         let header_size = mem::size_of::<AllocHeader>();
-        for alignment in (0..16).map(|i| 1 << i).filter(|&p| p >= header_size) {
-            let layout = Layout::from_size_align(alignment, alignment).unwrap();
-            let ptr = unsafe { ALLOC.alloc(layout) };
-            assert_ne!(ptr, null_mut());
+        for alloc in (0..16).map(|i| i << 1).filter(|&alloc| alloc > header_size) {
+            for alignment in (0..16).map(|i| 1 << i).filter(|&p| p >= header_size) {
+                let layout = Layout::from_size_align(alloc - header_size, alignment).unwrap();
+                let ptr = unsafe { ALLOC.alloc(layout) };
+                assert_ne!(ptr, null_mut());
 
-            assert_eq!(total_memory_usage(), alignment);
-            assert_eq!(ptr as usize % alignment, 0);
+                assert_eq!(ptr as usize % alignment, 0);
 
-            unsafe { ALLOC.dealloc(ptr, layout) };
+                unsafe { ALLOC.dealloc(ptr, layout) };
+            }
         }
     }
 }
