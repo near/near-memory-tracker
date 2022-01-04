@@ -1,26 +1,18 @@
 use backtrace::Backtrace;
-use once_cell::sync::Lazy;
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::Cell;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::mem;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Mutex;
 
 const MEBIBYTE: usize = 1024 * 1024;
 const SKIP_ADDR: *mut c_void = 0x700000000000 as *mut c_void;
 /// Configure how often should we print stack trace, whenever new record is reached.
 pub(crate) static REPORT_USAGE_INTERVAL: AtomicUsize = AtomicUsize::new(512 * MEBIBYTE);
 /// Should be a configurable option.
-pub(crate) static SAVE_STACK_TRACES_TO_FILE: AtomicBool = AtomicBool::new(false);
-/// Should be a configurable option.
 pub(crate) static ENABLE_STACK_TRACE: AtomicBool = AtomicBool::new(false);
 /// TODO: Make this configurable.
-pub(crate) static LOGS_PATH: Lazy<Mutex<String>> =
-    Lazy::new(|| Mutex::new("/tmp/logs".to_string()));
 
 const COUNTERS_SIZE: usize = 16384;
 static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE] = unsafe {
@@ -233,7 +225,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
             }
             Self::print_stack_trace_on_memory_spike(layout, tid, memory_usage);
             if ENABLE_STACK_TRACE.load(Ordering::Relaxed) {
-                Self::compute_stack_trace(layout, tid, &mut header.stack);
+                Self::compute_stack_trace(layout, &mut header.stack);
             }
             in_trace.set(0);
         });
@@ -283,11 +275,7 @@ impl<A: GlobalAlloc> ProxyAllocator<A> {
 
 impl<A: GlobalAlloc> ProxyAllocator<A> {
     #[inline]
-    unsafe fn compute_stack_trace(
-        layout: Layout,
-        tid: usize,
-        stack: &mut [*mut c_void; STACK_SIZE],
-    ) {
+    unsafe fn compute_stack_trace(layout: Layout, stack: &mut [*mut c_void; STACK_SIZE]) {
         if Self::should_compute_trace(layout) {
             const MISSING_TRACE: *mut c_void = 2 as *mut c_void;
             stack[0] = MISSING_TRACE;
@@ -310,9 +298,6 @@ impl<A: GlobalAlloc> ProxyAllocator<A> {
                     } else {
                         CHECKED_CACHE[i] |= cur_bit;
 
-                        if SAVE_STACK_TRACES_TO_FILE.load(Ordering::Relaxed) {
-                            Self::save_trace_to_file(tid, addr);
-                        }
                         false
                     }
                 }
@@ -336,31 +321,6 @@ impl<A: GlobalAlloc> ProxyAllocator<A> {
             // 100%
             _ => true,
         }
-    }
-
-    unsafe fn save_trace_to_file(tid: usize, addr: *mut c_void) {
-        // This may be slow, but that's optional so it's fine.
-        let logs_path = LOGS_PATH.lock().unwrap().to_string();
-        backtrace::resolve(addr, |symbol| {
-            let file_name = format!("{}/{}", logs_path, tid);
-            if let Ok(mut file) =
-                OpenOptions::new().create(true).write(true).append(true).open(file_name)
-            {
-                if let Some(path) = symbol.filename() {
-                    writeln!(
-                        file,
-                        "PATH addr={:?} symbol={} path={:?}",
-                        addr,
-                        symbol.lineno().unwrap_or_default(),
-                        path.as_os_str()
-                    )
-                    .unwrap();
-                }
-                if let Some(name) = symbol.name() {
-                    writeln!(file, "SYMBOL addr={:?} name={:?}", addr, name.as_str()).unwrap();
-                }
-            }
-        });
     }
 }
 
