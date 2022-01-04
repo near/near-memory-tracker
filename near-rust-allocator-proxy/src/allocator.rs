@@ -233,18 +233,18 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
             in_trace.set(0);
         });
 
-        let (new_layout, new_size) = layout.extend(Layout::new::<AllocHeader>()).unwrap();
+        let (new_layout, offset) = Layout::new::<AllocHeader>().extend(layout).unwrap();
 
         let res = self.inner.alloc(new_layout);
         *(res as *mut AllocHeader) = header;
 
-        res.add(new_size - layout.size())
+        res.add(offset)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        let (new_layout, new_size) = layout.extend(Layout::new::<AllocHeader>()).unwrap();
+        let (new_layout, offset) = Layout::new::<AllocHeader>().extend(layout).unwrap();
 
-        let ptr = ptr.sub(new_size - layout.size());
+        let ptr = ptr.sub(offset);
 
         let ah = &mut (*(ptr as *mut AllocHeader));
         debug_assert!(ah.is_allocated());
