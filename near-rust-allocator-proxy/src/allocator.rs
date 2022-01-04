@@ -1,13 +1,13 @@
 use backtrace::Backtrace;
 use std::alloc::{GlobalAlloc, Layout};
 use std::cell::Cell;
-use std::mem;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const MEBIBYTE: usize = 1024 * 1024;
-const SKIP_ADDR: *mut c_void = 0x700000000000 as *mut c_void;
+/// Skip addresses that are above this value.
+const SKIP_ADDR_ABOVE: *mut c_void = 0x700000000000 as *mut c_void;
 /// Configure how often should we print stack trace, whenever new record is reached.
 pub(crate) static REPORT_USAGE_INTERVAL: AtomicUsize = AtomicUsize::new(512 * MEBIBYTE);
 /// Should be a configurable option.
@@ -32,17 +32,22 @@ const CACHE_SIZE: usize = 1 << 20;
 static mut SKIP_CACHE: [u8; CACHE_SIZE] = [0; CACHE_SIZE];
 static mut CHECKED_CACHE: [u8; CACHE_SIZE] = [0; CACHE_SIZE];
 
+// TODO: Make stack size configurable
 const STACK_SIZE: usize = 1;
 
+// TODO: Store stack size
+// MAYBE: Make: tid: u16
+// MAYBE: split magic into two u32
+// MAYBE: make size u32
+// MAYBE: make stack list of [u32] to save memory - maybe?
 #[derive(Debug)]
-#[repr(C, align(8))]
+#[repr(C)]
 pub struct AllocHeader {
     magic: usize,
     size: usize,
     tid: usize,
     stack: [*mut c_void; STACK_SIZE],
 }
-pub const ALLOC_HEADER_SIZE: usize = mem::size_of::<AllocHeader>();
 
 impl AllocHeader {
     unsafe fn new(layout: Layout, tid: usize) -> AllocHeader {
@@ -111,6 +116,7 @@ fn murmur64(mut h: u64) -> u64 {
     h
 }
 
+/// TODO: Consider making this configurable
 const IGNORE_START: &[&str] = &[
     "__rg_",
     "_ZN10tokio_util",
@@ -126,6 +132,7 @@ const IGNORE_START: &[&str] = &[
     "_ZN9hashbrown",
 ];
 
+/// TODO: Consider making this configurable
 const IGNORE_INSIDE: &[&str] = &[
     "$LT$actix..",
     "$LT$alloc..",
@@ -201,10 +208,6 @@ impl<A> ProxyAllocator<A> {
 unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let tid = get_tid();
-        let new_layout =
-            Layout::from_size_align(layout.size() + ALLOC_HEADER_SIZE, layout.align()).unwrap();
-
-        let res = self.inner.alloc(new_layout);
         let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE]
             .fetch_add(layout.size(), Ordering::Relaxed)
             + layout.size();
@@ -229,16 +232,19 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
             }
             in_trace.set(0);
         });
+
+        let (new_layout, offset) = Layout::new::<AllocHeader>().extend(layout).unwrap();
+
+        let res = self.inner.alloc(new_layout);
         *(res as *mut AllocHeader) = header;
 
-        res.add(new_layout.size() - layout.size())
+        res.add(offset)
     }
 
-    unsafe fn dealloc(&self, mut ptr: *mut u8, layout: Layout) {
-        let new_layout =
-            Layout::from_size_align(layout.size() + ALLOC_HEADER_SIZE, layout.align()).unwrap();
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        let (new_layout, offset) = Layout::new::<AllocHeader>().extend(layout).unwrap();
 
-        ptr = ptr.offset(-((new_layout.size() - layout.size()) as isize));
+        let ptr = ptr.sub(offset);
 
         let ah = &mut (*(ptr as *mut AllocHeader));
         debug_assert!(ah.is_allocated());
@@ -282,7 +288,7 @@ impl<A: GlobalAlloc> ProxyAllocator<A> {
             backtrace::trace(|frame| {
                 let addr = frame.ip();
                 stack[0] = addr as *mut c_void;
-                if addr >= SKIP_ADDR as *mut c_void {
+                if addr >= SKIP_ADDR_ABOVE as *mut c_void {
                     true
                 } else {
                     let hash = (murmur64(addr as u64) % (8 * CACHE_SIZE as u64)) as usize;
@@ -358,6 +364,7 @@ mod test {
         ProxyAllocator::new(tikv_jemallocator::Jemalloc);
 
     #[test]
+    #[serial_test::serial]
     // Works only if run alone.
     fn test_allocator() {
         let layout = Layout::from_size_align(32, 1).unwrap();
@@ -367,5 +374,21 @@ mod test {
         assert_eq!(total_memory_usage(), 32);
 
         unsafe { ALLOC.dealloc(ptr, layout) };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_alignment() {
+        for i in 0..16 {
+            let alignment = 1 << i;
+            let layout = Layout::from_size_align(alignment, alignment).unwrap();
+            let ptr = unsafe { ALLOC.alloc(layout) };
+            assert_ne!(ptr, null_mut());
+
+            assert_eq!(total_memory_usage(), alignment);
+            assert_eq!(ptr as usize % alignment, 0);
+
+            unsafe { ALLOC.dealloc(ptr, layout) };
+        }
     }
 }
