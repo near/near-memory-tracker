@@ -1,14 +1,17 @@
 [package]
 name = "near-rust-allocator-proxy"
 version = "0.4.0"
-authors = ["Near Inc <hello@nearprotocol.com>", "Piotr Mikulski <piotr@near.org>"]
+authors = [
+    "Near Inc <hello@nearprotocol.com>",
+    "Piotr Mikulski <piotr@near.org>",
+]
+edition = "2021"
 description = "Rust allocator proxy with added header"
 readme = "README.md"
-keywords = ["memory", "tracker", "allocation", "header"]
 repository = "https://github.com/near/near-memory-tracker"
 license = "Apache-2.0"
+keywords = ["allocation", "header", "memory", "tracker"]
 categories = ["memory-management"]
-edition = "2021"
 
 [dependencies]
 backtrace = "0.3"
