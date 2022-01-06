@@ -420,7 +420,6 @@ dependencies = [
  "backtrace",
  "criterion",
  "nix",
- "once_cell",
  "serial_test",
  "tikv-jemallocator",
  "tracing",
