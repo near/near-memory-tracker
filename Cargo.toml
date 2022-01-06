@@ -1,15 +1,12 @@
 [workspace]
-members = [
-    "near-rust-allocator-proxy",
-    "dump-analyzer"
-]
-
-[profile.release]
-lto = true        # Enable full link-time optimization.
-codegen-units = 1 # Use only 1 codegen-unit to enable full optimizations.
-overflow-checks = true
+members = ["dump-analyzer", "near-rust-allocator-proxy"]
 
 [profile.bench]
-lto = true
 codegen-units = 1 # Use only 1 codegen-unit to enable full optimizations.
+lto = true
+overflow-checks = true
+
+[profile.release]
+codegen-units = 1 # Use only 1 codegen-unit to enable full optimizations.
+lto = true # Enable full link-time optimization.
 overflow-checks = true
