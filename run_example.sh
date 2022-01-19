@@ -15,5 +15,5 @@ example-target &
 sleep 10
 
 # Measure memory usage
-sudo $(which memory-analyzer) analyze --pid `pidof example-target`
+sudo $(which rust-memory-analyzer) analyze --pid `pidof example-target`
 
