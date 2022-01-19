@@ -5,9 +5,9 @@ use std::os::raw::c_void;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-const MEBIBYTE: usize = 1024 * 1024;
+const MEBIBYTE: usize = 1 << 20;
 /// Skip addresses that are above this value.
-const SKIP_ADDR_ABOVE: *mut c_void = 0x700000000000 as *mut c_void;
+const SKIP_ADDR_ABOVE: *mut c_void = 0x7000_0000_0000 as *mut c_void;
 /// Configure how often should we print stack trace, whenever new record is reached.
 pub(crate) static REPORT_USAGE_INTERVAL: AtomicUsize = AtomicUsize::new(512 * MEBIBYTE);
 /// Should be a configurable option.
@@ -19,12 +19,12 @@ static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE] = unsafe {
     // SAFETY: Rust [guarantees](https://doc.rust-lang.org/stable/std/sync/atomic/struct.AtomicUsize.html)
     // that `usize` and `AtomicUsize` have the same representation.
     std::mem::transmute::<[usize; COUNTERS_SIZE], [AtomicUsize; COUNTERS_SIZE]>(
-        [0usize; COUNTERS_SIZE],
+        [0_usize; COUNTERS_SIZE],
     )
 };
 static MEM_CNT: [AtomicUsize; COUNTERS_SIZE] = unsafe {
     std::mem::transmute::<[usize; COUNTERS_SIZE], [AtomicUsize; COUNTERS_SIZE]>(
-        [0usize; COUNTERS_SIZE],
+        [0_usize; COUNTERS_SIZE],
     )
 };
 
@@ -76,7 +76,7 @@ impl AllocHeader {
     }
 }
 
-const MAGIC_RUST: usize = 0x12345678991100;
+const MAGIC_RUST: usize = 0x12_3456_7899_1100;
 const FREED_MAGIC: usize = 0x100;
 
 thread_local! {
@@ -109,9 +109,9 @@ pub fn get_tid() -> usize {
 
 fn murmur64(mut h: u64) -> u64 {
     h ^= h >> 33;
-    h = h.overflowing_mul(0xff51afd7ed558ccd).0;
+    h = h.overflowing_mul(0xff51_afd7_ed55_8ccd).0;
     h ^= h >> 33;
-    h = h.overflowing_mul(0xc4ceb9fe1a85ec53).0;
+    h = h.overflowing_mul(0xc4ce_b9fe_1a85_ec53).0;
     h ^= h >> 33;
     h
 }
