@@ -61,26 +61,32 @@ impl AllocHeader {
         }
     }
 
+    #[must_use]
     pub fn size(&self) -> usize {
         self.size
     }
 
+    #[must_use]
     pub fn tid(&self) -> usize {
         self.tid
     }
 
+    #[must_use]
     pub fn stack(&self) -> &[*mut c_void; STACK_SIZE] {
         &self.stack
     }
 
+    #[must_use]
     pub fn valid(&self) -> bool {
         self.is_allocated() || self.is_freed()
     }
 
+    #[must_use]
     pub fn is_allocated(&self) -> bool {
         self.magic == (MAGIC_RUST + STACK_SIZE)
     }
 
+    #[must_use]
     pub fn is_freed(&self) -> bool {
         self.magic == MAGIC_RUST + STACK_SIZE + FREED_MAGIC
     }
@@ -101,6 +107,7 @@ thread_local! {
     static IN_TRACE: Cell<usize> = Cell::new(0);
 }
 
+#[must_use]
 pub fn get_tid() -> usize {
     TID.with(|f| {
         let mut v = f.get();
@@ -139,13 +146,13 @@ const IGNORE_START: &[&str] = &[
     "_ZN4core",
     "_ZN5actix",
     "_ZN5alloc",
+    "_ZN5bytes",
     "_ZN5tokio",
     "_ZN6base64",
     "_ZN6cached",
     "_ZN8smallvec",
-    "_ZN9hashbrown",
     "_ZN9backtrace9backtrace",
-    "_ZN5bytes",
+    "_ZN9hashbrown",
 ];
 
 /// TODO: Consider making this configurable
@@ -182,6 +189,7 @@ fn skip_ptr(addr: *mut c_void) -> bool {
     found
 }
 
+#[must_use]
 pub fn total_memory_usage() -> usize {
     MEM_SIZE.iter().map(|v| v.load(Ordering::Relaxed)).sum()
 }

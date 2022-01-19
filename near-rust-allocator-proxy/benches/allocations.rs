@@ -23,9 +23,9 @@ fn alloc_1024(c: &mut Criterion) {
 fn alloc_32(c: &mut Criterion) {
     let format = tracing_subscriber::fmt::format()
         .with_level(true) // don't include levels in formatted output
-        .with_target(true) // don't include trgets
+        .with_target(true) // don't include targets
         .without_time();
-    let _ = tracing_subscriber::fmt().event_format(format).finish().try_init();
+    tracing_subscriber::fmt().event_format(format).finish().try_init().ok();
     ALLOC.set_verbose(false).enable_stack_trace(true);
     c.bench_function("alloc_32", |b| {
         b.iter(|| {

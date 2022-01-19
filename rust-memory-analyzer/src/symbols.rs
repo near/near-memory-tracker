@@ -37,10 +37,10 @@ pub fn get_symbols(binary_path: &str) -> anyhow::Result<Vec<Symbol>> {
         .map(|line| line.split(' ').collect::<Vec<_>>())
         .filter(|s| s.len() >= 3)
         .map(|split| Symbol {
-            offset: usize::from_str_radix(&split[0], 16).unwrap_or_default(),
+            offset: usize::from_str_radix(split[0], 16).unwrap_or_default(),
             unk: split[1].to_string(),
             raw_symbol: split[2].to_string(),
-            symbol: demangle(&split[2]).to_string(),
+            symbol: demangle(split[2]).to_string(),
         })
         .collect())
 }
