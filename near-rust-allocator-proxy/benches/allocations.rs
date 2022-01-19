@@ -3,18 +3,30 @@ use near_rust_allocator_proxy::ProxyAllocator;
 #[global_allocator]
 static ALLOC: ProxyAllocator<tikv_jemallocator::Jemalloc> =
     ProxyAllocator::new(tikv_jemallocator::Jemalloc);
-
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use tracing_subscriber::util::SubscriberInitExt;
 
 fn alloc_1024(c: &mut Criterion) {
-    c.bench_function("alloc_1024", |b| {
+    let format = tracing_subscriber::fmt::format()
+        .with_level(true) // don't include levels in formatted output
+        .with_target(true) // don't include trgets
+        .without_time();
+    tracing_subscriber::fmt().event_format(format).finish().try_init().ok();
+    ALLOC.set_verbose(false).enable_stack_trace(true);
+    c.bench_function("alloc_2048", |b| {
         b.iter(|| {
-            black_box(vec![1024, 0]);
+            black_box(Vec::<u8>::with_capacity(1024));
         })
     });
 }
 
 fn alloc_32(c: &mut Criterion) {
+    let format = tracing_subscriber::fmt::format()
+        .with_level(true) // don't include levels in formatted output
+        .with_target(true) // don't include targets
+        .without_time();
+    tracing_subscriber::fmt().event_format(format).finish().try_init().ok();
+    ALLOC.set_verbose(false).enable_stack_trace(true);
     c.bench_function("alloc_32", |b| {
         b.iter(|| {
             black_box(Vec::<u8>::with_capacity(32));

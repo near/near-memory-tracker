@@ -1,5 +1,5 @@
 [workspace]
-members = ["dump-analyzer", "near-rust-allocator-proxy"]
+members = ["example-target", "rust-memory-analyzer", "near-rust-allocator-proxy"]
 
 [profile.bench]
 codegen-units = 1 # Use only 1 codegen-unit to enable full optimizations.

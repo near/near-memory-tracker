@@ -1,0 +1,12 @@
+[package]
+name = "example-target"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+tikv-jemallocator = "0.4.1"
+tracing = "0.1.13"
+tracing-subscriber = "0.3.3"
+
+near-rust-allocator-proxy = { path = "../near-rust-allocator-proxy" }

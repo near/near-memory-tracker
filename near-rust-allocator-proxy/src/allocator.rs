@@ -4,15 +4,16 @@ use std::cell::Cell;
 use std::os::raw::c_void;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use tracing::info;
 
 const MEBIBYTE: usize = 1 << 20;
 /// Skip addresses that are above this value.
 const SKIP_ADDR_ABOVE: *mut c_void = 0x7000_0000_0000 as *mut c_void;
 /// Configure how often should we print stack trace, whenever new record is reached.
-pub(crate) static REPORT_USAGE_INTERVAL: AtomicUsize = AtomicUsize::new(512 * MEBIBYTE);
+pub(crate) static REPORT_USAGE_INTERVAL: AtomicUsize = AtomicUsize::new(usize::MAX);
 /// Should be a configurable option.
 pub(crate) static ENABLE_STACK_TRACE: AtomicBool = AtomicBool::new(false);
-/// TODO: Make this configurable.
+pub(crate) static VERBOSE: AtomicBool = AtomicBool::new(false);
 
 const COUNTERS_SIZE: usize = 16384;
 static MEM_SIZE: [AtomicUsize; COUNTERS_SIZE] = unsafe {
@@ -43,6 +44,7 @@ const STACK_SIZE: usize = 1;
 #[derive(Debug)]
 #[repr(C)]
 pub struct AllocHeader {
+    // TODO (magic should be split in two parts, at front and back)
     magic: usize,
     size: usize,
     tid: usize,
@@ -50,8 +52,8 @@ pub struct AllocHeader {
 }
 
 impl AllocHeader {
-    unsafe fn new(layout: Layout, tid: usize) -> AllocHeader {
-        AllocHeader {
+    unsafe fn new(layout: Layout, tid: usize) -> Self {
+        Self {
             magic: MAGIC_RUST + STACK_SIZE,
             size: layout.size(),
             tid,
@@ -59,14 +61,32 @@ impl AllocHeader {
         }
     }
 
+    #[must_use]
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    #[must_use]
+    pub fn tid(&self) -> usize {
+        self.tid
+    }
+
+    #[must_use]
+    pub fn stack(&self) -> &[*mut c_void; STACK_SIZE] {
+        &self.stack
+    }
+
+    #[must_use]
     pub fn valid(&self) -> bool {
         self.is_allocated() || self.is_freed()
     }
 
+    #[must_use]
     pub fn is_allocated(&self) -> bool {
         self.magic == (MAGIC_RUST + STACK_SIZE)
     }
 
+    #[must_use]
     pub fn is_freed(&self) -> bool {
         self.magic == MAGIC_RUST + STACK_SIZE + FREED_MAGIC
     }
@@ -87,6 +107,7 @@ thread_local! {
     static IN_TRACE: Cell<usize> = Cell::new(0);
 }
 
+#[must_use]
 pub fn get_tid() -> usize {
     TID.with(|f| {
         let mut v = f.get();
@@ -125,10 +146,12 @@ const IGNORE_START: &[&str] = &[
     "_ZN4core",
     "_ZN5actix",
     "_ZN5alloc",
+    "_ZN5bytes",
     "_ZN5tokio",
     "_ZN6base64",
     "_ZN6cached",
     "_ZN8smallvec",
+    "_ZN9backtrace9backtrace",
     "_ZN9hashbrown",
 ];
 
@@ -155,8 +178,7 @@ fn skip_ptr(addr: *mut c_void) -> bool {
         found = found
             || symbol
                 .name()
-                .map(|name| name.as_str())
-                .flatten()
+                .and_then(|name| name.as_str())
                 .map(|name| {
                     IGNORE_START.iter().filter(|s: &&&str| name.starts_with(**s)).any(|_| true)
                         || IGNORE_INSIDE.iter().filter(|s: &&&str| name.contains(**s)).any(|_| true)
@@ -167,6 +189,7 @@ fn skip_ptr(addr: *mut c_void) -> bool {
     found
 }
 
+#[must_use]
 pub fn total_memory_usage() -> usize {
     MEM_SIZE.iter().map(|v| v.load(Ordering::Relaxed)).sum()
 }
@@ -186,7 +209,7 @@ pub fn thread_memory_count(tid: usize) -> usize {
 }
 
 pub fn current_thread_peak_memory_usage() -> usize {
-    MEMORY_USAGE_MAX.with(|x| x.get())
+    MEMORY_USAGE_MAX.with(Cell::get)
 }
 
 pub fn reset_memory_usage_max() {
@@ -200,13 +223,30 @@ pub struct ProxyAllocator<A> {
 }
 
 impl<A> ProxyAllocator<A> {
-    pub const fn new(inner: A) -> ProxyAllocator<A> {
-        ProxyAllocator { inner }
+    pub const fn new(inner: A) -> Self {
+        Self { inner }
+    }
+
+    /// Enable calling `backtrace` to fill out data
+    pub fn enable_stack_trace(&self, value: bool) -> &Self {
+        ENABLE_STACK_TRACE.store(value, Ordering::Relaxed);
+        self
+    }
+
+    pub fn set_report_usage_interval(&self, value: usize) -> &Self {
+        REPORT_USAGE_INTERVAL.store(value, Ordering::Relaxed);
+        self
+    }
+
+    pub fn set_verbose(&self, value: bool) -> &Self {
+        VERBOSE.store(value, Ordering::Relaxed);
+        self
     }
 }
 
 unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let verbose = VERBOSE.load(Ordering::Relaxed);
         let tid = get_tid();
         let memory_usage = MEM_SIZE[tid % COUNTERS_SIZE]
             .fetch_add(layout.size(), Ordering::Relaxed)
@@ -224,11 +264,16 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
 
         IN_TRACE.with(|in_trace| {
             if in_trace.replace(1) != 0 {
+                // Allocation happening within alloc due to backtrace.
+                header.stack[0] = usize::MAX as *mut c_void;
                 return;
             }
             Self::print_stack_trace_on_memory_spike(layout, tid, memory_usage);
             if ENABLE_STACK_TRACE.load(Ordering::Relaxed) {
-                Self::compute_stack_trace(layout, &mut header.stack);
+                Self::compute_stack_trace(layout, &mut header.stack, verbose);
+            }
+            if verbose {
+                tracing::info!(?header);
             }
             in_trace.set(0);
         });
@@ -236,7 +281,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
         let (new_layout, offset) = Layout::new::<AllocHeader>().extend(layout).unwrap();
 
         let res = self.inner.alloc(new_layout);
-        *(res as *mut AllocHeader) = header;
+        *res.cast::<AllocHeader>() = header;
 
         res.add(offset)
     }
@@ -246,7 +291,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for ProxyAllocator<A> {
 
         let ptr = ptr.sub(offset);
 
-        let ah = &mut (*(ptr as *mut AllocHeader));
+        let ah = &mut (*(ptr.cast::<AllocHeader>()));
         debug_assert!(ah.is_allocated());
         ah.mark_as_freed();
         let header_tid = ah.tid;
@@ -281,14 +326,18 @@ impl<A: GlobalAlloc> ProxyAllocator<A> {
 
 impl<A: GlobalAlloc> ProxyAllocator<A> {
     #[inline]
-    unsafe fn compute_stack_trace(layout: Layout, stack: &mut [*mut c_void; STACK_SIZE]) {
+    unsafe fn compute_stack_trace(
+        layout: Layout,
+        stack: &mut [*mut c_void; STACK_SIZE],
+        verbose: bool,
+    ) {
         if Self::should_compute_trace(layout) {
             const MISSING_TRACE: *mut c_void = 2 as *mut c_void;
             stack[0] = MISSING_TRACE;
             backtrace::trace(|frame| {
                 let addr = frame.ip();
-                stack[0] = addr as *mut c_void;
-                if addr >= SKIP_ADDR_ABOVE as *mut c_void {
+                stack[0] = addr.cast::<c_void>();
+                if addr >= SKIP_ADDR_ABOVE.cast::<c_void>() {
                     true
                 } else {
                     let hash = (murmur64(addr as u64) % (8 * CACHE_SIZE as u64)) as usize;
@@ -303,11 +352,15 @@ impl<A: GlobalAlloc> ProxyAllocator<A> {
                         true
                     } else {
                         CHECKED_CACHE[i] |= cur_bit;
-
                         false
                     }
                 }
-            })
+            });
+            if verbose {
+                info!(?stack, "STARTED_TRACE");
+            }
+        } else if verbose {
+            info!(?layout, "TRACING SKIPPED");
         }
     }
 
