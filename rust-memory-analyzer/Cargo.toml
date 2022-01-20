@@ -1,7 +1,17 @@
 [package]
 name = "rust-memory-analyzer"
 version = "0.1.0"
+authors = [
+    "Near Inc <hello@nearprotocol.com>",
+    "Piotr Mikulski <piotr@near.org>",
+]
 edition = "2021"
+description = "Rust memory analyzer"
+readme = "README.md"
+repository = "https://github.com/near/near-memory-tracker"
+license = "Apache-2.0"
+keywords = ["allocation", "header", "memory", "tracker"]
+categories = ["memory-management"]
 
 [dependencies]
 anyhow = "1.0.51"
