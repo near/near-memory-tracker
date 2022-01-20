@@ -7,10 +7,9 @@ edition = "2021"
 anyhow = "1.0.51"
 clap = "=3.0.0-rc.7"
 clap_derive = "=3.0.0-rc.7"
-itertools =  { version = "0.10.3", features = ["use_alloc", "use_std"] }
+itertools = { version = "0.10.3", features = ["use_alloc", "use_std"] }
+near-rust-allocator-proxy = "0.4.0"
 nix = "0.23.1"
 rustc-demangle = "=0.1.21"
 tracing = "0.1.29"
 tracing-subscriber = "0.3.3"
-
-near-rust-allocator-proxy = { path = "../near-rust-allocator-proxy" }
