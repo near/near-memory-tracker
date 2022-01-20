@@ -260,7 +260,7 @@ checksum = "e78d4f1cc4ae33bbfc157ed5d5a5ef3bc29227303d595861deb238fcec4e9457"
 name = "example-target"
 version = "0.1.0"
 dependencies = [
- "near-rust-allocator-proxy",
+ "near-rust-allocator-proxy 0.4.0",
  "tikv-jemallocator",
  "tracing",
  "tracing-subscriber",
@@ -423,6 +423,17 @@ dependencies = [
  "tikv-jemallocator",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "near-rust-allocator-proxy"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be44da452581a4f2e7870d86886f50605853943ded9b6a7975495914645cdca4"
+dependencies = [
+ "backtrace",
+ "nix",
+ "tracing",
 ]
 
 [[package]]
@@ -651,7 +662,7 @@ dependencies = [
  "clap 3.0.0-rc.7",
  "clap_derive",
  "itertools",
- "near-rust-allocator-proxy",
+ "near-rust-allocator-proxy 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "nix",
  "rustc-demangle",
  "tracing",
