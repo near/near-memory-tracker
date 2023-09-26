@@ -1,4 +1,3 @@
 [toolchain]
-# Please update rust-version in **/Cargo.toml files when changing channel:
-channel = "1.57.0"
+channel = "1.72.0"
 components = [ "rustfmt", "clippy" ]

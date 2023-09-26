@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-tikv-jemallocator = "0.4.1"
+tikv-jemallocator = "0.5"
 tracing = "0.1.13"
 tracing-subscriber = "0.3.3"
 
