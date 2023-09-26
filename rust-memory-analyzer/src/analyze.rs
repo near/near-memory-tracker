@@ -93,10 +93,10 @@ impl AnalyzeCmd {
         for (ptr, val) in ptr_2_memory.iter() {
             let symbol_mappings = (mmaped_exec.iter())
                 .filter(|x| {
-                    ((x.from as *mut c_void) <= (*ptr)) && ((*ptr as usize) < x.to as usize)
+                    ((x.from as *mut c_void) <= (*ptr)) && ((*ptr as usize) < x.to)
                 })
                 .filter_map(|smap| {
-                    let file_offset = (*ptr as usize) - smap.from as usize + smap.offset as usize;
+                    let file_offset = (*ptr as usize) - smap.from + smap.offset;
 
                     if let Some(last_sym) =
                         symbols.iter().filter(|s| s.offset <= file_offset).last()

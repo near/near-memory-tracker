@@ -28,7 +28,7 @@ impl SymbolsCmd {
 }
 
 pub fn get_symbols(binary_path: &str) -> anyhow::Result<Vec<Symbol>> {
-    let output = (Command::new("nm").arg("-an").arg(&binary_path))
+    let output = (Command::new("nm").arg("-an").arg(binary_path))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()?;
