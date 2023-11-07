@@ -92,11 +92,9 @@ impl AnalyzeCmd {
         let present_allocated_with_proxy = ptr_2_memory.iter().map(|x| x.1.size).sum();
         for (ptr, val) in ptr_2_memory.iter() {
             let symbol_mappings = (mmaped_exec.iter())
-                .filter(|x| {
-                    ((x.from as *mut c_void) <= (*ptr)) && ((*ptr as usize) < x.to as usize)
-                })
+                .filter(|x| ((x.from as *mut c_void) <= (*ptr)) && ((*ptr as usize) < x.to))
                 .filter_map(|smap| {
-                    let file_offset = (*ptr as usize) - smap.from as usize + smap.offset as usize;
+                    let file_offset = (*ptr as usize) - smap.from + smap.offset;
 
                     if let Some(last_sym) =
                         symbols.iter().filter(|s| s.offset <= file_offset).last()
